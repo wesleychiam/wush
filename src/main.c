@@ -1,5 +1,8 @@
 #include <stdio.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #define INPUT_BUFFER 64
 #define MAX_ARGS 16
@@ -9,6 +12,27 @@ typedef enum {
     PARSE_EXIT,
     PARSE_FAIL
 } ParseResult;
+
+// Takes parsed tokens
+// Processes ls type instructions using external commands
+static int ls(char **args) {
+    pid_t pid = fork();
+    int status; // Status of child process
+    if (pid < 0) {
+        perror("fork failed");
+        return 1;
+    } else if (pid == 0) {
+        // Child process
+        execvp(args[0], args);
+        perror("execvp failed");
+        return 1;
+    } else {
+        // Parent process
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status)) return 0;
+        return 1;
+    }
+}
 
 // Takes input string, representing prompted user input
 // Decomposes string into corresponding instruction(s)
@@ -29,11 +53,12 @@ static ParseResult parse(char *inp) {
 
     // Second pass: compare tokens with defined functions
     if (strcmp(args[0], "ls") == 0) {
-        // Implement ls command
-        // TODO
+        ls(args);
+        return PARSE_OK;
     } else if (strcmp(args[0], "pwd") == 0) {
         // Implement pwd command
         // TODO
+        return PARSE_OK;
     } else if (strcmp(args[0], "exit") == 0) {
         return PARSE_EXIT;
     } else {
