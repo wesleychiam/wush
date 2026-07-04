@@ -14,8 +14,8 @@ typedef enum {
 } ParseResult;
 
 // Takes parsed tokens
-// Processes ls type instructions using external commands
-static int ls(char **args) {
+// Processes external command instructions 
+static int externalCommand(char **args) {
     pid_t pid = fork();
     int status; // Status of child process
     if (pid < 0) {
@@ -25,7 +25,7 @@ static int ls(char **args) {
         // Child process
         execvp(args[0], args);
         perror("execvp failed");
-        return 1;
+        _exit(127); // Command not found
     } else {
         // Parent process
         waitpid(pid, &status, 0);
@@ -52,18 +52,14 @@ static ParseResult parse(char *inp) {
     args[nargs] = NULL;
 
     // Second pass: compare tokens with defined functions
-    if (strcmp(args[0], "ls") == 0) {
-        ls(args);
-        return PARSE_OK;
-    } else if (strcmp(args[0], "pwd") == 0) {
-        // Implement pwd command
-        // TODO
+    if (nargs == 0) {
         return PARSE_OK;
     } else if (strcmp(args[0], "exit") == 0) {
         return PARSE_EXIT;
     } else {
-        printf("%s: command not found\n", args[0]);
-        return PARSE_FAIL;
+        int error = externalCommand(args);
+        if (error) return PARSE_FAIL;
+        return PARSE_OK;
     }
 }
 
