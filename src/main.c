@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -34,9 +35,28 @@ static int externalCommand(char **args) {
     }
 }
 
+// Takes parsed tokens and number of arguments
+// Process change directory type (cd) instructions
+// Return 0 on success, else -1
+static int builtin_cd(char **args, int nargs) {
+    int status;
+    if (nargs == 1) {
+        status = chdir(getenv("HOME"));
+        if (status == -1) perror("cd");
+    } else if (nargs == 2) {
+        status = chdir(args[1]);
+        if (status == -1) perror("cd");
+    } else {
+        status = -1;
+        printf("Usage: cd <path>\n");
+    }
+    return status;
+}
+
 // Takes input string, representing prompted user input
 // Decomposes string into corresponding instruction(s)
-// Delegates to respective processes or handles errors 
+// Delegates to respective processes or handles errors
+// Returns PARSE_FAIL if user enters a bad/unknown command 
 static ParseResult parse(char *inp) {
     // First pass: split input string into tokens
     char *delims = " \t\n";
@@ -56,6 +76,12 @@ static ParseResult parse(char *inp) {
         return PARSE_OK;
     } else if (strcmp(args[0], "exit") == 0) {
         return PARSE_EXIT;
+    } else if (strcmp(args[0], "cd") == 0) {
+        int error = builtin_cd(args, nargs);
+        if (error == -1) {
+            return PARSE_FAIL;
+        }
+        return PARSE_OK;
     } else {
         int error = externalCommand(args);
         if (error) return PARSE_FAIL;
@@ -68,8 +94,7 @@ int main(void) {
     while (status != PARSE_EXIT) {
         char buffer[INPUT_BUFFER];
         printf("wush> ");
-        fgets(buffer, sizeof(buffer), stdin);
-
+        if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
         status = parse(buffer);
         
     }
