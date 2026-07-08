@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,6 +6,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#define COMMAND_NOT_FOUND 127
+#define FILENAME_BUFFER 32
 #define INPUT_BUFFER 64
 #define MAX_ARGS 16
 
@@ -22,7 +25,7 @@ static int externalCommand(char **args) {
     // Child process
     execvp(args[0], args);
     perror("execvp failed");
-    _exit(127); // Command not found
+    _exit(COMMAND_NOT_FOUND);
   } else {
     // Parent process
     waitpid(pid, &status, 0);
@@ -62,11 +65,37 @@ static ParseResult parse(char *inp) {
   char *ptr;
   char *token = strtok_r(inp, delims, &ptr);
   char *args[MAX_ARGS];
+
+  char output[FILENAME_BUFFER];
+  bool output_redir = false;
+  bool output_found = false;
+
   int nargs = 0;
   while (token != NULL && nargs < MAX_ARGS - 1) {
-    args[nargs] = token;
-    nargs++;
+    // Handle output redirection
+    if (strcmp(token, ">") == 0) {
+        output_redir = true;
+
+    } else if (output_redir) {
+        if (strlen(token) >= FILENAME_BUFFER) {
+            printf("Filename exceeds buffer capacity: %d\n", FILENAME_BUFFER);
+            return PARSE_FAIL;
+        }
+        strcpy(output, token);
+        output_found = true;
+        break; // Parse up to one output file
+    
+    } else {
+        args[nargs] = token;
+        nargs++;
+    }
+
     token = strtok_r(NULL, delims, &ptr);
+  }
+
+  if (output_redir && !output_found) {
+    printf("No specified output stream in redirection\n");
+    return PARSE_FAIL;
   }
   args[nargs] = NULL;
 

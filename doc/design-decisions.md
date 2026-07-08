@@ -17,3 +17,7 @@ corresponding to the 2008 POSIX.1-2008 operating system interface. It exposes
 POSIX functions such as `execvp`, `fork`, and `strtok_r`. This version balances
 the availability of newer interfaces and source-code portability of the program,
 so no compiler or platform-specific extensions are relied on.
+
+Output redirection parsed by the shell before external command execution, using
+an `output` string buffer, containing the parsed filename. This is to prevent
+passing `> <filename>` tokens to execvp.
