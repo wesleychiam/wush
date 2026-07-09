@@ -76,14 +76,18 @@ static ParseResult parse(char *inp) {
     if (strcmp(token, ">") == 0) {
         output_redir = true;
 
+    } else if (output_redir && output_found) {
+        // Parse only one output file
+        printf("Error: multiple output streams detected\n");
+        return PARSE_FAIL;
+
     } else if (output_redir) {
         if (strlen(token) >= FILENAME_BUFFER) {
-            printf("Filename exceeds buffer capacity: %d\n", FILENAME_BUFFER);
+            printf("Error: filename exceeds buffer capacity: %d\n", FILENAME_BUFFER);
             return PARSE_FAIL;
         }
         strcpy(output, token);
         output_found = true;
-        break; // Parse up to one output file
     
     } else {
         args[nargs] = token;
@@ -94,7 +98,7 @@ static ParseResult parse(char *inp) {
   }
 
   if (output_redir && !output_found) {
-    printf("No specified output stream in redirection\n");
+    printf("Error: no specified output stream in redirection\n");
     return PARSE_FAIL;
   }
   args[nargs] = NULL;
@@ -123,8 +127,7 @@ int main(void) {
   while (status != PARSE_EXIT) {
     char buffer[INPUT_BUFFER];
     printf("wush> ");
-    if (fgets(buffer, sizeof(buffer), stdin) == NULL)
-      break;
+    if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
     status = parse(buffer);
   }
 }

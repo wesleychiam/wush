@@ -12,7 +12,7 @@ changes directory before terminating.
 implemented commands, because the shell must not terminate when running execvp.
 
 # v2
-`-D_POSIX_C_SOURCE=200809L` defines the POSIX interface, with 200809L
+`-D_POSIX_C_SOURCE=200809L` defines the POSIX interface, with `200809L`
 corresponding to the 2008 POSIX.1-2008 operating system interface. It exposes
 POSIX functions such as `execvp`, `fork`, and `strtok_r`. This version balances
 the availability of newer interfaces and source-code portability of the program,

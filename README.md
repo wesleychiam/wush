@@ -5,9 +5,9 @@ The program will repeatedly prompt the user until they wish to exit. It features
 built-in commands such as exit and cd, and external commands, for example: ls,
 pwd, whoami. 
 
-Temporary build instructions (until MakeFile is added); run in terminal:
-    gcc -c main.c -o main.o
-    gcc main.o -o main
+To initialise the program, run in terminal:
+    make
+    cd build
     ./main
 
 Example usage, after running the above commands:
