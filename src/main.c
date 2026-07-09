@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,17 +16,34 @@ typedef enum { PARSE_OK, PARSE_EXIT, PARSE_FAIL } ParseResult;
 
 // Takes parsed tokens
 // Processes external command instructions
-static int externalCommand(char **args) {
+static int externalCommand(char **args, char *filename) {
   pid_t pid = fork();
   int status; // Status of child process
+
   if (pid < 0) {
     perror("fork failed");
     return 1;
+  
   } else if (pid == 0) {
     // Child process
+    if (filename != NULL) {
+      // Output redirection
+      int fd;
+      fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      if (fd < 0) {
+        perror(filename);
+        _exit(1);
+      }
+      if (dup2(fd, STDOUT_FILENO) < 0) {
+        perror("Output redirection");
+        _exit(1);
+      }
+      close(fd);
+    }
     execvp(args[0], args);
     perror("execvp failed");
     _exit(COMMAND_NOT_FOUND);
+  
   } else {
     // Parent process
     waitpid(pid, &status, 0);
@@ -115,7 +133,7 @@ static ParseResult parse(char *inp) {
     }
     return PARSE_OK;
   } else {
-    int error = externalCommand(args);
+    int error = externalCommand(args, output_redir ? output : NULL);
     if (error)
       return PARSE_FAIL;
     return PARSE_OK;
