@@ -21,3 +21,7 @@ so no compiler or platform-specific extensions are relied on.
 Output redirection parsed by the shell before external command execution, using
 an `output` string buffer, containing the parsed filename. This is to prevent
 passing `> <filename>` tokens to execvp.
+On malformed input, such as `doesnotexist > bad.txt`, creating an empty file and
+printing an error message is intentional; validating after `execvp` is difficult
+as `execvp` terminates on success, and duplicating `execvp` may risk TOCTOU race
+conditions.  

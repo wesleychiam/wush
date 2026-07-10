@@ -13,6 +13,8 @@
 #define MAX_ARGS 16
 
 typedef enum { PARSE_OK, PARSE_EXIT, PARSE_FAIL } ParseResult;
+typedef enum { EXPECT_INPUT, EXPECT_OUTPUT, ARGUMENT } ParseState;
+typedef enum { REDIR_NONE, REDIR_INPUT, REDIR_OUTPUT } Redirection;
 
 // Takes parsed tokens
 // Processes external command instructions
@@ -23,7 +25,7 @@ static int externalCommand(char **args, char *filename) {
   if (pid < 0) {
     perror("fork failed");
     return 1;
-  
+
   } else if (pid == 0) {
     // Child process
     if (filename != NULL) {
@@ -43,7 +45,7 @@ static int externalCommand(char **args, char *filename) {
     execvp(args[0], args);
     perror("execvp failed");
     _exit(COMMAND_NOT_FOUND);
-  
+
   } else {
     // Parent process
     waitpid(pid, &status, 0);
@@ -73,6 +75,14 @@ static int builtin_cd(char **args, int nargs) {
   return status;
 }
 
+// Parses tokens according to the redirection operator.
+// Returns the corresponding enum type, otherwise REDIR_NONE 
+static Redirection get_redirection(const char *token) {
+  if (strcmp("<", token) == 0) return REDIR_INPUT;
+  if (strcmp(">", token) == 0) return REDIR_OUTPUT;
+  return REDIR_NONE;
+}
+
 // Takes input string, representing prompted user input
 // Decomposes string into corresponding instruction(s)
 // Delegates to respective processes or handles errors
@@ -84,44 +94,73 @@ static ParseResult parse(char *inp) {
   char *token = strtok_r(inp, delims, &ptr);
   char *args[MAX_ARGS];
 
+  ParseState state = ARGUMENT;
+  Redirection arg = REDIR_NONE;
   char output[FILENAME_BUFFER];
+  char input[FILENAME_BUFFER];
   bool output_redir = false;
-  bool output_found = false;
+  bool input_redir = false;
 
   int nargs = 0;
   while (token != NULL && nargs < MAX_ARGS - 1) {
-    // Handle output redirection
-    if (strcmp(token, ">") == 0) {
-        output_redir = true;
-
-    } else if (output_redir && output_found) {
-        // Parse only one output file
-        printf("Error: multiple output streams detected\n");
-        return PARSE_FAIL;
-
-    } else if (output_redir) {
-        if (strlen(token) >= FILENAME_BUFFER) {
-            printf("Error: filename exceeds buffer capacity: %d\n", FILENAME_BUFFER);
+    arg = get_redirection(token);
+    if (state == ARGUMENT) {
+      switch (arg) {
+        case REDIR_INPUT:
+          if (input_redir) {
+            printf("Error: multiple input streams detected\n");
             return PARSE_FAIL;
-        }
-        strcpy(output, token);
-        output_found = true;
-    
+          }
+          state = EXPECT_INPUT;
+          input_redir = true;
+          break;
+        case REDIR_OUTPUT:
+          if (output_redir) {
+            printf("Error: multiple output streams detected\n");
+            return PARSE_FAIL;
+          }
+          state = EXPECT_OUTPUT;
+          output_redir = true;
+          break;
+        case REDIR_NONE:
+          args[nargs++] = token;
+          break;
+        default:
+          printf("Error: invalid state reached\n");
+          abort();
+      }
+
+
     } else {
-        args[nargs] = token;
-        nargs++;
+      if (strlen(token) >= FILENAME_BUFFER) {
+        printf("Error: filename exceeds buffer capacity: %d\n",
+               FILENAME_BUFFER);
+        return PARSE_FAIL;
+      }
+      if (arg == REDIR_INPUT || arg == REDIR_OUTPUT) {
+        printf("Error: expected filename after '%s'\n",
+               state == EXPECT_INPUT ? "<" : ">");
+        return PARSE_FAIL;
+      }
+      strcpy(state == EXPECT_INPUT ? input : output, token);
+      state = ARGUMENT;
     }
 
     token = strtok_r(NULL, delims, &ptr);
   }
 
-  if (output_redir && !output_found) {
+  if (output_redir && state == EXPECT_OUTPUT) {
     printf("Error: no specified output stream in redirection\n");
+    return PARSE_FAIL;
+  }
+  if (input_redir && state == EXPECT_INPUT) {
+    printf("Error: no specified input stream in redirection\n");
     return PARSE_FAIL;
   }
   args[nargs] = NULL;
 
   // Second pass: compare tokens with defined functions
+  printf("i: %s, o: %s\n", input_redir ? input : "none", output_redir ? output : "none");
   if (nargs == 0) {
     return PARSE_OK;
   } else if (strcmp(args[0], "exit") == 0) {
@@ -145,7 +184,8 @@ int main(void) {
   while (status != PARSE_EXIT) {
     char buffer[INPUT_BUFFER];
     printf("wush> ");
-    if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
+    if (fgets(buffer, sizeof(buffer), stdin) == NULL)
+      break;
     status = parse(buffer);
   }
 }
