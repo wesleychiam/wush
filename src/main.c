@@ -18,7 +18,8 @@ typedef enum { REDIR_NONE, REDIR_INPUT, REDIR_OUTPUT } Redirection;
 
 // Takes parsed tokens
 // Processes external command instructions
-static int externalCommand(char **args, char *filename) {
+static int externalCommand(char **args, const char *input_filename,
+                           const char *output_filename) {
   pid_t pid = fork();
   int status; // Status of child process
 
@@ -28,12 +29,26 @@ static int externalCommand(char **args, char *filename) {
 
   } else if (pid == 0) {
     // Child process
-    if (filename != NULL) {
-      // Output redirection
-      int fd;
-      fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd;
+    if (input_filename != NULL) {
+      // Input redirection
+      fd = open(input_filename, O_RDONLY, 0644);
       if (fd < 0) {
-        perror(filename);
+        perror(input_filename);
+        _exit(1);
+      }
+      if (dup2(fd, STDIN_FILENO) < 0) {
+        perror("Input redirecton");
+        _exit(1);
+      }
+      close(fd);
+    }
+
+    if (output_filename != NULL) {
+      // Output redirection
+      fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      if (fd < 0) {
+        perror(output_filename);
         _exit(1);
       }
       if (dup2(fd, STDOUT_FILENO) < 0) {
@@ -76,10 +91,12 @@ static int builtin_cd(char **args, int nargs) {
 }
 
 // Parses tokens according to the redirection operator.
-// Returns the corresponding enum type, otherwise REDIR_NONE 
+// Returns the corresponding enum type, otherwise REDIR_NONE
 static Redirection get_redirection(const char *token) {
-  if (strcmp("<", token) == 0) return REDIR_INPUT;
-  if (strcmp(">", token) == 0) return REDIR_OUTPUT;
+  if (strcmp("<", token) == 0)
+    return REDIR_INPUT;
+  if (strcmp(">", token) == 0)
+    return REDIR_OUTPUT;
   return REDIR_NONE;
 }
 
@@ -106,30 +123,29 @@ static ParseResult parse(char *inp) {
     arg = get_redirection(token);
     if (state == ARGUMENT) {
       switch (arg) {
-        case REDIR_INPUT:
-          if (input_redir) {
-            printf("Error: multiple input streams detected\n");
-            return PARSE_FAIL;
-          }
-          state = EXPECT_INPUT;
-          input_redir = true;
-          break;
-        case REDIR_OUTPUT:
-          if (output_redir) {
-            printf("Error: multiple output streams detected\n");
-            return PARSE_FAIL;
-          }
-          state = EXPECT_OUTPUT;
-          output_redir = true;
-          break;
-        case REDIR_NONE:
-          args[nargs++] = token;
-          break;
-        default:
-          printf("Error: invalid state reached\n");
-          abort();
+      case REDIR_INPUT:
+        if (input_redir) {
+          printf("Error: multiple input streams detected\n");
+          return PARSE_FAIL;
+        }
+        state = EXPECT_INPUT;
+        input_redir = true;
+        break;
+      case REDIR_OUTPUT:
+        if (output_redir) {
+          printf("Error: multiple output streams detected\n");
+          return PARSE_FAIL;
+        }
+        state = EXPECT_OUTPUT;
+        output_redir = true;
+        break;
+      case REDIR_NONE:
+        args[nargs++] = token;
+        break;
+      default:
+        printf("Error: invalid state reached\n");
+        abort();
       }
-
 
     } else {
       if (strlen(token) >= FILENAME_BUFFER) {
@@ -160,7 +176,6 @@ static ParseResult parse(char *inp) {
   args[nargs] = NULL;
 
   // Second pass: compare tokens with defined functions
-  printf("i: %s, o: %s\n", input_redir ? input : "none", output_redir ? output : "none");
   if (nargs == 0) {
     return PARSE_OK;
   } else if (strcmp(args[0], "exit") == 0) {
@@ -172,7 +187,9 @@ static ParseResult parse(char *inp) {
     }
     return PARSE_OK;
   } else {
-    int error = externalCommand(args, output_redir ? output : NULL);
+    char *input_filename = input_redir ? input : NULL;
+    char *output_filename = output_redir ? output : NULL;
+    int error = externalCommand(args, input_filename, output_filename);
     if (error)
       return PARSE_FAIL;
     return PARSE_OK;

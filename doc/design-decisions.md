@@ -25,3 +25,11 @@ On malformed input, such as `doesnotexist > bad.txt`, creating an empty file and
 printing an error message is intentional; validating after `execvp` is difficult
 as `execvp` terminates on success, and duplicating `execvp` may risk TOCTOU race
 conditions.  
+
+Enum types `ParseState` and `Redirection` were created to assist parsing clearly
+such that support for future redirection tokens are easily implemented.
+`ParseState` helps with tracking whether or not a filename is expected, and to
+filter out potential syntax errors. `Redirection` corresponds to the redirection
+operator token, and is separate to `input_redir` and `output_redir` booleans, as
+these booleans are used to specify the child process in the `externalCommand`
+function.
