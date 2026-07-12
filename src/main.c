@@ -13,13 +13,24 @@
 #define MAX_ARGS 16
 
 typedef enum { PARSE_OK, PARSE_EXIT, PARSE_FAIL } ParseResult;
-typedef enum { EXPECT_INPUT, EXPECT_OUTPUT, ARGUMENT } ParseState;
-typedef enum { REDIR_NONE, REDIR_INPUT, REDIR_OUTPUT } Redirection;
+typedef enum {
+  EXPECT_INPUT,
+  EXPECT_OUTPUT,
+  EXPECT_OUTPUT_APPEND,
+  ARGUMENT
+} ParseState;
+typedef enum {
+  REDIR_NONE,
+  REDIR_INPUT,
+  REDIR_OUTPUT,
+  REDIR_OUTPUT_APPEND
+} Redirection;
 
 // Takes parsed tokens
 // Processes external command instructions
-static int externalCommand(char **args, const char *input_filename,
-                           const char *output_filename) {
+static int external_command(char **args, const char *input_filename,
+                           const char *output_filename, Redirection output_redir
+                           ) {
   pid_t pid = fork();
   int status; // Status of child process
 
@@ -38,7 +49,7 @@ static int externalCommand(char **args, const char *input_filename,
         _exit(1);
       }
       if (dup2(fd, STDIN_FILENO) < 0) {
-        perror("Input redirecton");
+        perror("Input redirection");
         _exit(1);
       }
       close(fd);
@@ -46,7 +57,18 @@ static int externalCommand(char **args, const char *input_filename,
 
     if (output_filename != NULL) {
       // Output redirection
-      fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      switch (output_redir) {
+        case REDIR_OUTPUT_APPEND:
+          fd = open(output_filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
+          break;
+        case REDIR_OUTPUT:
+          fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          break;
+        default:
+          printf("Error: invalid state reached\n");
+          abort();
+      }
+
       if (fd < 0) {
         perror(output_filename);
         _exit(1);
@@ -65,7 +87,7 @@ static int externalCommand(char **args, const char *input_filename,
     // Parent process
     waitpid(pid, &status, 0);
     if (WIFEXITED(status))
-      return 0;
+      return WEXITSTATUS(status);
     return 1;
   }
 }
@@ -97,6 +119,8 @@ static Redirection get_redirection(const char *token) {
     return REDIR_INPUT;
   if (strcmp(">", token) == 0)
     return REDIR_OUTPUT;
+  if (strcmp(">>", token) == 0)
+    return REDIR_OUTPUT_APPEND;
   return REDIR_NONE;
 }
 
@@ -115,8 +139,8 @@ static ParseResult parse(char *inp) {
   Redirection arg = REDIR_NONE;
   char output[FILENAME_BUFFER];
   char input[FILENAME_BUFFER];
-  bool output_redir = false;
-  bool input_redir = false;
+  Redirection output_redir = REDIR_NONE;
+  Redirection input_redir = REDIR_NONE;
 
   int nargs = 0;
   while (token != NULL && nargs < MAX_ARGS - 1) {
@@ -124,20 +148,28 @@ static ParseResult parse(char *inp) {
     if (state == ARGUMENT) {
       switch (arg) {
       case REDIR_INPUT:
-        if (input_redir) {
+        if (input_redir != REDIR_NONE) {
           printf("Error: multiple input streams detected\n");
           return PARSE_FAIL;
         }
         state = EXPECT_INPUT;
-        input_redir = true;
+        input_redir = REDIR_INPUT;
         break;
       case REDIR_OUTPUT:
-        if (output_redir) {
+        if (output_redir != REDIR_NONE) {
           printf("Error: multiple output streams detected\n");
           return PARSE_FAIL;
         }
         state = EXPECT_OUTPUT;
-        output_redir = true;
+        output_redir = REDIR_OUTPUT;
+        break;
+      case REDIR_OUTPUT_APPEND:
+        if (output_redir != REDIR_NONE) {
+          printf("Error: multiple output streams detected\n");
+          return PARSE_FAIL;
+        }
+        state = EXPECT_OUTPUT_APPEND;
+        output_redir = REDIR_OUTPUT_APPEND;
         break;
       case REDIR_NONE:
         args[nargs++] = token;
@@ -153,10 +185,22 @@ static ParseResult parse(char *inp) {
                FILENAME_BUFFER);
         return PARSE_FAIL;
       }
-      if (arg == REDIR_INPUT || arg == REDIR_OUTPUT) {
-        printf("Error: expected filename after '%s'\n",
-               state == EXPECT_INPUT ? "<" : ">");
-        return PARSE_FAIL;
+      // Do not accept filenames named as a redirection operator
+      if (arg != REDIR_NONE) {
+        switch (state) {
+          case EXPECT_INPUT:
+            printf("Error: expected filename after '<'\n");
+            return PARSE_FAIL;
+          case EXPECT_OUTPUT:
+            printf("Error: expected filename after '>'\n");
+            return PARSE_FAIL;
+          case EXPECT_OUTPUT_APPEND:
+            printf("Error: expected filename after '>>'\n");
+            return PARSE_FAIL;
+          default:
+            printf("Error: invalid state reached\n");
+            abort();
+        }
       }
       strcpy(state == EXPECT_INPUT ? input : output, token);
       state = ARGUMENT;
@@ -164,13 +208,9 @@ static ParseResult parse(char *inp) {
 
     token = strtok_r(NULL, delims, &ptr);
   }
-
-  if (output_redir && state == EXPECT_OUTPUT) {
-    printf("Error: no specified output stream in redirection\n");
-    return PARSE_FAIL;
-  }
-  if (input_redir && state == EXPECT_INPUT) {
-    printf("Error: no specified input stream in redirection\n");
+  // Check for incomplete redirection command
+  if (state != ARGUMENT) {
+    printf("Error: expected filename\n");
     return PARSE_FAIL;
   }
   args[nargs] = NULL;
@@ -187,9 +227,10 @@ static ParseResult parse(char *inp) {
     }
     return PARSE_OK;
   } else {
-    char *input_filename = input_redir ? input : NULL;
-    char *output_filename = output_redir ? output : NULL;
-    int error = externalCommand(args, input_filename, output_filename);
+    char *input_filename = input_redir == REDIR_NONE ? NULL : input;
+    char *output_filename = output_redir == REDIR_NONE ? NULL : output;
+    int error = external_command(args, input_filename, output_filename,
+                                 output_redir);
     if (error)
       return PARSE_FAIL;
     return PARSE_OK;
