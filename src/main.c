@@ -28,6 +28,7 @@ typedef enum {
 
 // Takes parsed tokens
 // Processes external command instructions
+// Returns 1 on failure, 0 on success
 static int external_command(char **args, const char *input_filename,
                            const char *output_filename, Redirection output_redir
                            ) {
@@ -92,6 +93,16 @@ static int external_command(char **args, const char *input_filename,
   }
 }
 
+// Takes parsed tokens
+// Processes any instruction involving pipe
+// REturn 0 on success, else -1
+static int external_pipe(char **args, int nargs, const char *input_filename,
+                         const char *output_filename, Redirection output_redir,
+                         int pipe_start) {
+  // TODO
+  return 0;                      
+  }
+
 // Takes parsed tokens and number of arguments
 // Process change directory type (cd) instructions
 // Return 0 on success, else -1
@@ -135,16 +146,19 @@ static ParseResult parse(char *inp) {
   char *token = strtok_r(inp, delims, &ptr);
   char *args[MAX_ARGS];
 
-  ParseState state = ARGUMENT;
-  Redirection arg = REDIR_NONE;
   char output[FILENAME_BUFFER];
   char input[FILENAME_BUFFER];
+  ParseState state = ARGUMENT;
+  Redirection arg = REDIR_NONE;
   Redirection output_redir = REDIR_NONE;
   Redirection input_redir = REDIR_NONE;
 
   int nargs = 0;
+  int pipe_start = 0;
+  bool pipe_found = false;
   while (token != NULL && nargs < MAX_ARGS - 1) {
     arg = get_redirection(token);
+    bool is_pipe = strcmp(token, "|") == 0;
     if (state == ARGUMENT) {
       switch (arg) {
       case REDIR_INPUT:
@@ -172,7 +186,17 @@ static ParseResult parse(char *inp) {
         output_redir = REDIR_OUTPUT_APPEND;
         break;
       case REDIR_NONE:
-        args[nargs++] = token;
+        // Parse pipe logic
+        if (is_pipe && pipe_found) {
+          printf("Error: more than one pipe detected\n");
+          return PARSE_FAIL;
+        } else if (is_pipe) {
+          args[nargs++] = NULL;
+          pipe_found = true;
+          pipe_start = nargs;
+        } else {
+          args[nargs++] = token;
+        }
         break;
       default:
         printf("Error: invalid state reached\n");
@@ -185,8 +209,9 @@ static ParseResult parse(char *inp) {
                FILENAME_BUFFER);
         return PARSE_FAIL;
       }
-      // Do not accept filenames named as a redirection operator
-      if (arg != REDIR_NONE) {
+
+      // Do not accept filenames named as a redirection operator or a pipe
+      if (arg != REDIR_NONE || is_pipe) {
         switch (state) {
           case EXPECT_INPUT:
             printf("Error: expected filename after '<'\n");
@@ -208,12 +233,19 @@ static ParseResult parse(char *inp) {
 
     token = strtok_r(NULL, delims, &ptr);
   }
+
   // Check for incomplete redirection command
   if (state != ARGUMENT) {
     printf("Error: expected filename\n");
     return PARSE_FAIL;
   }
   args[nargs] = NULL;
+
+  // Check for incomplete pipe command
+  if (pipe_found && (pipe_start == 1 || pipe_start == nargs)) {
+    printf("Usage: <command> | <command>\n");
+    return PARSE_FAIL; 
+  }
 
   // Second pass: compare tokens with defined functions
   if (nargs == 0) {
@@ -229,10 +261,16 @@ static ParseResult parse(char *inp) {
   } else {
     char *input_filename = input_redir == REDIR_NONE ? NULL : input;
     char *output_filename = output_redir == REDIR_NONE ? NULL : output;
-    int error = external_command(args, input_filename, output_filename,
-                                 output_redir);
-    if (error)
-      return PARSE_FAIL;
+    
+    int error;
+    if (pipe_found) {
+      error = external_pipe(args, nargs, input_filename, output_filename,
+              output_redir, pipe_start);
+    } else {
+      error = external_command(args, input_filename, output_filename,
+              output_redir);
+    }
+    if (error) return PARSE_FAIL;
     return PARSE_OK;
   }
 }

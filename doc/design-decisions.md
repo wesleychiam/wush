@@ -1,7 +1,7 @@
 # Design decisions
 
 # v1
-`cd` changes the shell's working directory. It is implemented interally, as the
+`cd` changes the shell's working directory. It is implemented internally, as the
 child process, if implemented externally via execvp, only the child process
 changes directory before terminating.
 
@@ -21,15 +21,20 @@ so no compiler or platform-specific extensions are relied on.
 Output redirection parsed by the shell before external command execution, using
 an `output` string buffer, containing the parsed filename. This is to prevent
 passing `> <filename>` tokens to execvp.
-On malformed input, such as `doesnotexist > bad.txt`, creating an empty file and
-printing an error message is intentional; validating after `execvp` is difficult
-as `execvp` terminates on success, and duplicating `execvp` may risk TOCTOU race
+On input such as `doesnotexist > bad.txt`, creating an empty file and printing
+an error message is intentional; validating after `execvp` is difficult as
+`execvp` terminates on success, and duplicating `execvp` may risk TOCTOU race
 conditions.  
 
 Enum types `ParseState` and `Redirection` were created to assist parsing clearly
-such that support for future redirection tokens are easily implemented.
-`ParseState` helps with tracking whether or not a filename is expected, and to
-filter out potential syntax errors. `Redirection` corresponds to the redirection
-operator token, and is separate to `input_redir` and `output_redir` booleans, as
-these booleans are used to specify the child process in the `externalCommand`
-function.
+and support future redirection tokens. `ParseState` helps with tracking whether
+a filename is expected, and to filter out potential syntax errors.
+
+For pipe instructions, `pipe_start` was chosen to indicate the index of the next
+instruction, which will simplify the start of `external_pipe`. Checking that the
+`pipe_start` in parser is not equal to 1 is due to `pipe_start = nargs` called
+after `nargs++`, so the index will never be 0 unless there is no pipe token.
+For a single pipeline, the parser replaces the pipe token with `NULL`, producing
+two adjacent `argv` sequences in the same array. `pipe_start` stores the index
+where the second command begins. This avoids copying tokens into separate arrays
+and may also support extending the parser to multiple pipeline stages later.
