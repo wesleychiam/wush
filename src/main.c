@@ -121,6 +121,20 @@ static int external_pipe(char **args, const char *input_filename,
     return 1;
   } else if (l_pid == 0) {
     // Left child
+    // Handle input redirection
+    if (input_filename != NULL) {
+      int fd = open(input_filename, O_RDONLY, 0644);
+      if (fd < 0) {
+        perror(input_filename);
+        _exit(1);
+      }
+      if (dup2(fd, STDIN_FILENO) < 0) {
+        perror("Input redirection");
+        _exit(1);
+      }
+      close(fd);
+    }
+    // Pipe logic
     if (dup2(pipefd[1], STDOUT_FILENO) < 0) {
       perror("pipe failed");
       _exit(1);
@@ -131,7 +145,7 @@ static int external_pipe(char **args, const char *input_filename,
     perror("execvp failed");
     _exit(COMMAND_NOT_FOUND);
   }
-  // Right command
+  // Right command parent
   pid_t r_pid = fork();
   int r_status;
   if (r_pid < 0) {
@@ -142,6 +156,31 @@ static int external_pipe(char **args, const char *input_filename,
     return 1;
   } else if (r_pid == 0) {
     // Right child
+    // Output redirection
+    if (output_filename != NULL) {
+      int fd;
+      switch (output_redir) {
+        case REDIR_OUTPUT_APPEND:
+          fd = open(output_filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
+          break;
+        case REDIR_OUTPUT:
+          fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          break;
+        default:
+          printf("Error: invalid state reached\n");
+          abort();
+        }
+      if (fd < 0) {
+        perror(output_filename);
+        _exit(1);
+      }
+      if (dup2(fd, STDOUT_FILENO) < 0) {
+        perror("Output redirection");
+        _exit(1);
+      }
+      close(fd);
+    }
+    // Pipe logic
     if (dup2(pipefd[0], STDIN_FILENO) < 0) {
       perror("pipe failed");
       _exit(1);
