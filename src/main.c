@@ -40,18 +40,16 @@ static void run_child(char **args, int input_fd, int output_fd) {
     if (dup2(input_fd, STDIN_FILENO) < 0) {
       perror("Child input redirection");
       _exit(1);
-    } else {
-      close(input_fd);
     }
+    close(input_fd);
   }
 
   if (output_fd > 2) {
     if (dup2(output_fd, STDOUT_FILENO) < 0) {
       perror("Child output redirection");
       _exit(1);
-    } else {
-      close(output_fd);
     }
+    close(output_fd);
   }
 
   execvp(args[0], args);
@@ -74,48 +72,40 @@ static int external_command(char **args, const char *input_filename,
 
   } else if (pid == 0) {
     // Child process
-    int fd;
+    int input_fd;
     if (input_filename != NULL) {
-      // Input redirection
-      fd = open(input_filename, O_RDONLY, 0644);
-      if (fd < 0) {
+      if ((input_fd = open(input_filename, O_RDONLY, 0644)) < 0) {
         perror(input_filename);
         _exit(1);
       }
-      if (dup2(fd, STDIN_FILENO) < 0) {
-        perror("Input redirection");
-        _exit(1);
-      }
-      close(fd);
+    } else {
+      input_fd = -1;
     }
-
+    
+    int output_fd;
     if (output_filename != NULL) {
-      // Output redirection
       switch (output_redir) {
       case REDIR_OUTPUT_APPEND:
-        fd = open(output_filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        output_fd = open(output_filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
         break;
       case REDIR_OUTPUT:
-        fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        output_fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         break;
       default:
         printf("Error: invalid state reached\n");
         abort();
       }
-
-      if (fd < 0) {
+      if (output_fd < 0) {
         perror(output_filename);
         _exit(1);
       }
-      if (dup2(fd, STDOUT_FILENO) < 0) {
-        perror("Output redirection");
-        _exit(1);
-      }
-      close(fd);
+    } else {
+      output_fd = -1;
     }
-    execvp(args[0], args);
-    perror("execvp failed");
-    _exit(COMMAND_NOT_FOUND);
+
+    run_child(args, input_fd, output_fd);
+    // run_child must terminate the child and therefore does not return
+    abort();
 
   } else {
     // Parent process
@@ -134,9 +124,6 @@ static int external_command(char **args, const char *input_filename,
 static int external_pipe(char **args, const char *input_filename,
                          const char *output_filename, Redirection output_redir,
                          int pipe_start) {
-  char **left_arg = args;
-  char **right_arg = args + pipe_start;
-
   // Create pipe
   int pipefd[2];
   if (pipe(pipefd) < 0) {
@@ -144,7 +131,7 @@ static int external_pipe(char **args, const char *input_filename,
     return 1;
   }
 
-  // Left command
+  // Left command parent
   pid_t l_pid = fork();
   int l_status;
   if (l_pid < 0) {
@@ -154,29 +141,21 @@ static int external_pipe(char **args, const char *input_filename,
     return 1;
   } else if (l_pid == 0) {
     // Left child
-    // Handle input redirection
+    // Close unused read end
+    close(pipefd[0]); 
+    // Left child logic
+    int input_fd;
     if (input_filename != NULL) {
-      int fd = open(input_filename, O_RDONLY, 0644);
-      if (fd < 0) {
+      if ((input_fd = open(input_filename, O_RDONLY, 0644)) < 0) {
         perror(input_filename);
         _exit(1);
       }
-      if (dup2(fd, STDIN_FILENO) < 0) {
-        perror("Input redirection");
-        _exit(1);
-      }
-      close(fd);
+    } else {
+      input_fd = -1;
     }
-    // Pipe logic
-    if (dup2(pipefd[1], STDOUT_FILENO) < 0) {
-      perror("pipe failed");
-      _exit(1);
-    }
-    close(pipefd[0]);
-    close(pipefd[1]);
-    execvp(left_arg[0], left_arg);
-    perror("execvp failed");
-    _exit(COMMAND_NOT_FOUND);
+    run_child(args, input_fd, pipefd[1]);
+    // run_child must terminate the child and therefore does not return
+    abort();
   }
   // Right command parent
   pid_t r_pid = fork();
@@ -189,40 +168,32 @@ static int external_pipe(char **args, const char *input_filename,
     return 1;
   } else if (r_pid == 0) {
     // Right child
-    // Output redirection
+    // Close unused write end
+    close(pipefd[1]);
+    // Right child logic
+    int output_fd;
     if (output_filename != NULL) {
-      int fd;
       switch (output_redir) {
         case REDIR_OUTPUT_APPEND:
-          fd = open(output_filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
+          output_fd = open(output_filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
           break;
         case REDIR_OUTPUT:
-          fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          output_fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
           break;
         default:
           printf("Error: invalid state reached\n");
           abort();
         }
-      if (fd < 0) {
+      if (output_fd < 0) {
         perror(output_filename);
         _exit(1);
       }
-      if (dup2(fd, STDOUT_FILENO) < 0) {
-        perror("Output redirection");
-        _exit(1);
-      }
-      close(fd);
+    } else {
+      output_fd = -1;
     }
-    // Pipe logic
-    if (dup2(pipefd[0], STDIN_FILENO) < 0) {
-      perror("pipe failed");
-      _exit(1);
-    }
-    close(pipefd[0]);
-    close(pipefd[1]);
-    execvp(right_arg[0], right_arg);
-    perror("execvp failed");
-    _exit(COMMAND_NOT_FOUND);
+    run_child(args + pipe_start, pipefd[0], output_fd);
+    // run_child must terminate the child and therefore does not return
+    abort();
   }
   // Parent
   close(pipefd[0]);
