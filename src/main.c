@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -25,6 +26,38 @@ typedef enum {
   REDIR_OUTPUT,
   REDIR_OUTPUT_APPEND
 } Redirection;
+
+// Takes command arguments, input, and output file descriptors
+// Constraint: fd > 2 (owned) or fd = -1 (no change i.e. STDIN, STDOUT)
+// Constraint: if input_fd, output_fd > 0, input_fd != output_fd
+// Automatically closes owned file descriptors and exits child on failure
+static void run_child(char **args, int input_fd, int output_fd) {
+  assert(input_fd > 2 || input_fd == -1);
+  assert(output_fd > 2 || output_fd == -1);
+  assert((input_fd == -1 || output_fd == -1) || input_fd != output_fd);
+
+  if (input_fd > 2) {
+    if (dup2(input_fd, STDIN_FILENO) < 0) {
+      perror("Child input redirection");
+      _exit(1);
+    } else {
+      close(input_fd);
+    }
+  }
+
+  if (output_fd > 2) {
+    if (dup2(output_fd, STDOUT_FILENO) < 0) {
+      perror("Child output redirection");
+      _exit(1);
+    } else {
+      close(output_fd);
+    }
+  }
+
+  execvp(args[0], args);
+  perror("Child execvp");
+  _exit(COMMAND_NOT_FOUND);
+}
 
 // Takes parsed tokens
 // Processes external command instructions
