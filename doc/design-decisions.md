@@ -38,3 +38,20 @@ For a single pipeline, the parser replaces the pipe token with `NULL`, producing
 two adjacent `argv` sequences in the same array. `pipe_start` stores the index
 where the second command begins. This avoids copying tokens into separate arrays
 and may also support extending the parser to multiple pipeline stages later.
+
+`run_child` configures and executes an already-forked child process for
+`external_command` and `external_pipe`. The helper reduces duplicate `dup2`,
+`close`, and `execvp` logic.
+Its contract requires each I/O file descriptor to be either `-1` or `>2`. Values
+greater than 2 are treated as owned by the helper: they are duplicated onto
+`STDIN_FILENO` or `STDOUT_FILENO` and closed. If both descriptors are owned,
+they must be unique. A value of `-1` means that the corresponding stream should
+not be changed.
+It is not responsible for opening the file, creating child processes, closing
+unrelated pipe ends, and waiting for children. It was designed to be unaware of
+whether its descriptors are from pipes or files for simplicity - abstracting
+pipe details improves its portability; especially where it is not needed for
+`external_command`.
+The function does not return during normal operation. On success, `execvp`
+replaces the child's program image. On failure, the child reports an error and
+terminates via `_exit`, reducing cleanup for the parent.

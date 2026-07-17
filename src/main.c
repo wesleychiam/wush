@@ -29,7 +29,7 @@ typedef enum {
 
 // Takes command arguments, input, and output file descriptors
 // Constraint: fd > 2 (owned) or fd = -1 (no change i.e. STDIN, STDOUT)
-// Constraint: if input_fd, output_fd > 0, input_fd != output_fd
+// Constraint: if input_fd, output_fd > 2, input_fd != output_fd
 // Automatically closes owned file descriptors and exits child on failure
 static void run_child(char **args, int input_fd, int output_fd) {
   assert(input_fd > 2 || input_fd == -1);
@@ -119,8 +119,6 @@ static int external_command(char **args, const char *input_filename,
 // Takes parsed tokens
 // Processes any instruction involving pipe
 // Returns non-zero on failure, 0 on success
-
-// Redirection support pending
 static int external_pipe(char **args, const char *input_filename,
                          const char *output_filename, Redirection output_redir,
                          int pipe_start) {
