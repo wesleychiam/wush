@@ -57,6 +57,50 @@ static void run_child(char **args, int input_fd, int output_fd) {
   _exit(COMMAND_NOT_FOUND);
 }
 
+// Takes an input filename and opens the file
+// On success return the corresponding file descriptor
+// On failure return -1
+// Constraint: filename is defined
+static int open_input_file(const char *input_filename) {
+  assert(input_filename != NULL);
+
+  int input_fd;
+  if ((input_fd = open(input_filename, O_RDONLY, 0644)) < 0) {
+    perror(input_filename);
+    return -1;
+  }
+
+  return input_fd;
+}
+
+// Takes an output filename and a redirection
+// Opens the file with access modes depending on the redirection
+// On success return the corresponding file descriptor
+// On failure return -1
+// Constraint: filename is defined
+static int open_output_file(const char *output_filename, Redirection output_redir) {
+  assert(output_filename != NULL);
+
+  int output_fd;
+  switch (output_redir) {
+  case REDIR_OUTPUT_APPEND:
+    output_fd = open(output_filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    break;
+  case REDIR_OUTPUT:
+    output_fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    break;
+  default:
+    printf("Error: invalid state reached\n");
+    abort();
+  }
+
+  if (output_fd < 0) {
+    perror(output_filename);
+    return -1;
+  }
+  return output_fd;
+}
+
 // Takes parsed tokens
 // Processes external command instructions
 // Returns non-zero on failure, 0 on success
@@ -72,35 +116,20 @@ static int external_command(char **args, const char *input_filename,
 
   } else if (pid == 0) {
     // Child process
-    int input_fd;
+    int input_fd = -1;
     if (input_filename != NULL) {
-      if ((input_fd = open(input_filename, O_RDONLY, 0644)) < 0) {
-        perror(input_filename);
+      if ((input_fd = open_input_file(input_filename)) < 0) {
+        // Invalid file descriptor
         _exit(1);
       }
-    } else {
-      input_fd = -1;
     }
-    
-    int output_fd;
+
+    int output_fd = -1;
     if (output_filename != NULL) {
-      switch (output_redir) {
-      case REDIR_OUTPUT_APPEND:
-        output_fd = open(output_filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
-        break;
-      case REDIR_OUTPUT:
-        output_fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        break;
-      default:
-        printf("Error: invalid state reached\n");
-        abort();
-      }
-      if (output_fd < 0) {
-        perror(output_filename);
+      if ((output_fd = open_output_file(output_filename, output_redir)) < 0) {
+        // Invalid file descriptor
         _exit(1);
       }
-    } else {
-      output_fd = -1;
     }
 
     run_child(args, input_fd, output_fd);
@@ -140,17 +169,16 @@ static int external_pipe(char **args, const char *input_filename,
   } else if (l_pid == 0) {
     // Left child
     // Close unused read end
-    close(pipefd[0]); 
+    close(pipefd[0]);
     // Left child logic
-    int input_fd;
+    int input_fd = -1;
     if (input_filename != NULL) {
-      if ((input_fd = open(input_filename, O_RDONLY, 0644)) < 0) {
-        perror(input_filename);
+      if ((input_fd = open_input_file(input_filename)) < 0) {
+        // Invalid file descriptor
         _exit(1);
       }
-    } else {
-      input_fd = -1;
     }
+
     run_child(args, input_fd, pipefd[1]);
     // run_child must terminate the child and therefore does not return
     abort();
@@ -169,26 +197,14 @@ static int external_pipe(char **args, const char *input_filename,
     // Close unused write end
     close(pipefd[1]);
     // Right child logic
-    int output_fd;
+    int output_fd = -1;
     if (output_filename != NULL) {
-      switch (output_redir) {
-        case REDIR_OUTPUT_APPEND:
-          output_fd = open(output_filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
-          break;
-        case REDIR_OUTPUT:
-          output_fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-          break;
-        default:
-          printf("Error: invalid state reached\n");
-          abort();
-        }
-      if (output_fd < 0) {
-        perror(output_filename);
+      if ((output_fd = open_output_file(output_filename, output_redir)) < 0) {
+        // Invalid file descriptor
         _exit(1);
       }
-    } else {
-      output_fd = -1;
     }
+
     run_child(args + pipe_start, pipefd[0], output_fd);
     // run_child must terminate the child and therefore does not return
     abort();

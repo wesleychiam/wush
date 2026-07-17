@@ -55,3 +55,16 @@ pipe details improves its portability; especially where it is not needed for
 The function does not return during normal operation. On success, `execvp`
 replaces the child's program image. On failure, the child reports an error and
 terminates via `_exit`, reducing cleanup for the parent.
+
+`open_input_file` and `open_output_file` are a pair of functions created to open
+file descriptors corresponding to a filename and redirection. The purpose of 
+these functions is to separate the responsibility of retrieving file descriptors
+from `external_command` and `external_pipe`, which is not their main goal to
+forks and manage children.
+Their contract requires the filename to be defined, because it would be
+difficult to differentiate a suitable error return and a file descriptor to show
+no redirection. Handling this is done in the `external_` functions, only called
+when a file genuinely needs opening. This simplifies the contract of the helper
+because it only returns -1 on failure, and a descriptor on success so that an
+error is reported but not terminated, allowing the child logic to terminate
+accordingly.
