@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -224,4 +225,76 @@ int builtin_cd(char **args, int nargs) {
     printf("Usage: cd <path>\n");
   }
   return status;
+}
+
+static int exec_cmd(char **args, int input_fd, int output_fd) {
+  pid_t pid = fork();
+  int status;
+  if (pid < 0) {
+    perror("exec_cmd");
+    _exit(1);
+  } else if (pid == 0) {
+    // Child logic
+    run_child(args, input_fd, output_fd);
+    // run_child must terminate and there does not return
+    printf("Error: failed to terminate child\n");
+    abort();
+  } else {
+    close(input_fd);
+    close(output_fd);
+    waitpid(pid, &status, 0);
+    if (WIFEXITED(status)) {
+      return WEXITSTATUS(status);
+    }
+    return 1;
+  }
+}
+
+int builtin_here_doc(char **args, const char *here_doc_delim,
+                     const char *output_filename, Redirection output_redir) {
+  char path[] = "/tmp/heredocbuffer.XXXXXX";
+
+  int input_fd = mkstemp(path);
+  if (input_fd < 3) {
+    // The program relies on STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO
+    // reserving file descriptors 0-2, and -1 is returned for failed mkstemp
+    perror("mkstemp");
+    return -1;
+  }
+
+  int output_fd = -1;
+  if (output_filename != NULL) {
+    if ((output_fd = open_output_file(output_filename, output_redir)) < 3) {
+      // The program relies on STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO
+      // reserving file descriptors 0-2, and -1 is returned for a failed
+      // open_output_file call
+      close(input_fd);
+      return -1;
+    }
+  }
+
+  char buffer[INPUT_BUFFER];
+  int n = strlen(here_doc_delim);
+  while (true) {
+    printf("> ");
+    if (fgets(buffer, sizeof(buffer), stdin) == NULL)
+      break;
+    if (strncmp(buffer, here_doc_delim, n) == 0) {
+      break;
+    } else {
+      write(input_fd, buffer, strlen(buffer));
+    }
+  }
+
+  unlink(path);
+  if (lseek(input_fd, 0, SEEK_SET) == -1) {
+    perror("lseek");
+    if (input_fd > 2)
+      close(input_fd);
+    if (output_fd > 2)
+      close(output_fd);
+    return -1;
+  }
+
+  return exec_cmd(args, input_fd, output_fd);
 }

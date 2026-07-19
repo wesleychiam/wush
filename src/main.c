@@ -4,8 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define INPUT_BUFFER 64
-
 int main(void) {
   ParseResult status = PARSE_OK;
   while (status != PARSE_EXIT) {

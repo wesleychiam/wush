@@ -11,16 +11,19 @@
 
 typedef enum {
   EXPECT_INPUT,
+  EXPECT_HERE_DOC,
   EXPECT_OUTPUT,
   EXPECT_OUTPUT_APPEND,
   ARGUMENT
 } ParseState;
 
-// Parses tokens according to the redirection operator.
+// Parses tokens according to the redirection operator
 // Returns the corresponding enum type, otherwise REDIR_NONE
 static Redirection get_redirection(const char *token) {
   if (strcmp("<", token) == 0)
     return REDIR_INPUT;
+  if (strcmp("<<", token) == 0)
+    return REDIR_HERE_DOC;
   if (strcmp(">", token) == 0)
     return REDIR_OUTPUT;
   if (strcmp(">>", token) == 0)
@@ -45,6 +48,10 @@ ParseResult parse(char *inp) {
   int pipe_start = 0;
   bool pipe_found = false;
 
+  // Here-document variables
+  char here_doc_delim[FILENAME_BUFFER];
+  bool here_doc_found = false;
+
   // First pass: split input string into tokens
   char *delims = " \t\n";
   char *ptr;
@@ -64,6 +71,15 @@ ParseResult parse(char *inp) {
         }
         state = EXPECT_INPUT;
         input_redir = REDIR_INPUT;
+        break;
+      case REDIR_HERE_DOC:
+        if (input_redir != REDIR_NONE) {
+          printf("Error: multiple input streams detected\n");
+          return PARSE_FAIL;
+        }
+        here_doc_found = true;
+        state = EXPECT_HERE_DOC;
+        input_redir = REDIR_HERE_DOC;
         break;
       case REDIR_OUTPUT:
         if (output_redir != REDIR_NONE) {
@@ -112,6 +128,9 @@ ParseResult parse(char *inp) {
         case EXPECT_INPUT:
           printf("Error: expected filename after '<'\n");
           return PARSE_FAIL;
+        case EXPECT_HERE_DOC:
+          printf("Error: expected delimiter after '<<'\n");
+          return PARSE_FAIL;
         case EXPECT_OUTPUT:
           printf("Error: expected filename after '>'\n");
           return PARSE_FAIL;
@@ -123,7 +142,22 @@ ParseResult parse(char *inp) {
           abort();
         }
       }
-      strcpy(state == EXPECT_INPUT ? input : output, token);
+
+      switch (state) {
+      case EXPECT_INPUT:
+        strcpy(input, token);
+        break;
+      case EXPECT_HERE_DOC:
+        strcpy(here_doc_delim, token);
+        break;
+      case EXPECT_OUTPUT:
+      case EXPECT_OUTPUT_APPEND:
+        strcpy(output, token);
+        break;
+      default:
+        printf("Error: invalid state reached\n");
+        abort();
+      }
       state = ARGUMENT;
     }
 
@@ -155,11 +189,17 @@ ParseResult parse(char *inp) {
     }
     return PARSE_OK;
   } else {
-    char *input_filename = input_redir == REDIR_NONE ? NULL : input;
-    char *output_filename = output_redir == REDIR_NONE ? NULL : output;
+    char *input_filename = input_redir == REDIR_INPUT ? input : NULL;
+    char *output_filename =
+        output_redir == REDIR_OUTPUT || output_redir == REDIR_OUTPUT_APPEND
+            ? output
+            : NULL;
 
     int error;
-    if (pipe_found) {
+    if (here_doc_found) {
+      error =
+          builtin_here_doc(args, here_doc_delim, output_filename, output_redir);
+    } else if (pipe_found) {
       error = external_pipe(args, input_filename, output_filename, output_redir,
                             pipe_start);
     } else {
