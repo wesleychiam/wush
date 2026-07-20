@@ -37,8 +37,6 @@ static Redirection get_redirection(const char *token) {
 // Returns PARSE_FAIL if user enters a bad/unknown command
 ParseResult parse(char *inp) {
   // Redirection variables
-  char output[FILENAME_BUFFER];
-  char input[FILENAME_BUFFER];
   ParseState state = ARGUMENT;
   Redirection arg = REDIR_NONE;
   Redirection output_redir = REDIR_NONE;
@@ -48,9 +46,10 @@ ParseResult parse(char *inp) {
   int pipe_start = 0;
   bool pipe_found = false;
 
-  // Here-document variables
+  // Here-document & filename buffer variables
   char here_doc_delim[FILENAME_BUFFER];
-  bool here_doc_found = false;
+  char input_filename[FILENAME_BUFFER];
+  char output_filename[FILENAME_BUFFER];
 
   // First pass: split input string into tokens
   char *delims = " \t\n";
@@ -66,7 +65,7 @@ ParseResult parse(char *inp) {
       switch (arg) {
       case REDIR_INPUT:
         if (input_redir != REDIR_NONE) {
-          printf("Error: multiple input streams detected\n");
+          printf("parse: multiple input streams detected\n");
           return PARSE_FAIL;
         }
         state = EXPECT_INPUT;
@@ -74,16 +73,15 @@ ParseResult parse(char *inp) {
         break;
       case REDIR_HERE_DOC:
         if (input_redir != REDIR_NONE) {
-          printf("Error: multiple input streams detected\n");
+          printf("parse: multiple input streams detected\n");
           return PARSE_FAIL;
         }
-        here_doc_found = true;
         state = EXPECT_HERE_DOC;
         input_redir = REDIR_HERE_DOC;
         break;
       case REDIR_OUTPUT:
         if (output_redir != REDIR_NONE) {
-          printf("Error: multiple output streams detected\n");
+          printf("parse: multiple output streams detected\n");
           return PARSE_FAIL;
         }
         state = EXPECT_OUTPUT;
@@ -91,7 +89,7 @@ ParseResult parse(char *inp) {
         break;
       case REDIR_OUTPUT_APPEND:
         if (output_redir != REDIR_NONE) {
-          printf("Error: multiple output streams detected\n");
+          printf("parse: multiple output streams detected\n");
           return PARSE_FAIL;
         }
         state = EXPECT_OUTPUT_APPEND;
@@ -100,7 +98,7 @@ ParseResult parse(char *inp) {
       case REDIR_NONE:
         // Parse pipe logic
         if (is_pipe && pipe_found) {
-          printf("Error: more than one pipe detected\n");
+          printf("parse: more than one pipe detected\n");
           return PARSE_FAIL;
         } else if (is_pipe) {
           args[nargs++] = NULL;
@@ -111,13 +109,13 @@ ParseResult parse(char *inp) {
         }
         break;
       default:
-        printf("Error: invalid state reached\n");
+        printf("parse: invalid state reached\n");
         abort();
       }
 
     } else {
       if (strlen(token) >= FILENAME_BUFFER) {
-        printf("Error: filename exceeds buffer capacity: %d\n",
+        printf("parse: filename exceeds buffer capacity: %d\n",
                FILENAME_BUFFER);
         return PARSE_FAIL;
       }
@@ -126,36 +124,36 @@ ParseResult parse(char *inp) {
       if (arg != REDIR_NONE || is_pipe) {
         switch (state) {
         case EXPECT_INPUT:
-          printf("Error: expected filename after '<'\n");
+          printf("parse: expected filename after '<'\n");
           return PARSE_FAIL;
         case EXPECT_HERE_DOC:
-          printf("Error: expected delimiter after '<<'\n");
+          printf("parse: expected delimiter after '<<'\n");
           return PARSE_FAIL;
         case EXPECT_OUTPUT:
-          printf("Error: expected filename after '>'\n");
+          printf("parse: expected filename after '>'\n");
           return PARSE_FAIL;
         case EXPECT_OUTPUT_APPEND:
-          printf("Error: expected filename after '>>'\n");
+          printf("parse: expected filename after '>>'\n");
           return PARSE_FAIL;
         default:
-          printf("Error: invalid state reached\n");
+          printf("parse: invalid state reached\n");
           abort();
         }
       }
 
       switch (state) {
       case EXPECT_INPUT:
-        strcpy(input, token);
+        strcpy(input_filename, token);
         break;
       case EXPECT_HERE_DOC:
         strcpy(here_doc_delim, token);
         break;
       case EXPECT_OUTPUT:
       case EXPECT_OUTPUT_APPEND:
-        strcpy(output, token);
+        strcpy(output_filename, token);
         break;
       default:
-        printf("Error: invalid state reached\n");
+        printf("parse: invalid state reached\n");
         abort();
       }
       state = ARGUMENT;
@@ -166,7 +164,7 @@ ParseResult parse(char *inp) {
 
   // Check for incomplete redirection command
   if (state != ARGUMENT) {
-    printf("Error: expected filename\n");
+    printf("parse: expected filename\n");
     return PARSE_FAIL;
   }
   args[nargs] = NULL;
@@ -189,23 +187,13 @@ ParseResult parse(char *inp) {
     }
     return PARSE_OK;
   } else {
-    char *input_filename = input_redir == REDIR_INPUT ? input : NULL;
-    char *output_filename =
-        output_redir == (REDIR_OUTPUT || REDIR_OUTPUT_APPEND) ? output : NULL;
-
-    int error;
-    if (here_doc_found) {
-      error =
-          builtin_here_doc(args, here_doc_delim, output_filename, output_redir);
-    } else if (pipe_found) {
-      error = external_pipe(args, input_filename, output_filename, output_redir,
-                            pipe_start);
-    } else {
-      error =
-          external_command(args, input_filename, output_filename, output_redir);
-    }
-    if (error)
+    // External command
+    if (external_command(args, input_filename, here_doc_delim, input_redir,
+                         output_filename, output_redir, pipe_found,
+                         pipe_start)) {
       return PARSE_FAIL;
+    }
+
     return PARSE_OK;
   }
 }
