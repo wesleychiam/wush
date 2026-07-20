@@ -14,9 +14,10 @@
 #define COMMAND_NOT_FOUND 127
 
 // Takes command arguments, input, and output file descriptors
-// Constraint: fd > 2 (owned) or fd = -1 (no change i.e. STDIN, STDOUT)
-// Constraint: if input_fd, output_fd > 2, input_fd != output_fd
-// Automatically closes owned file descriptors and exits child on failure
+// Constraint: input_fd > 2 || input_fd == -1
+// Constraint: output_fd > 2 || output_fd == -1
+// Constraint: (input_fd == -1 || output_fd == -1) || input_fd != output_fd
+// Automatically closes owned file descriptors (>2) and exits child on failure
 static void run_child(char **args, int input_fd, int output_fd) {
   assert(input_fd > 2 || input_fd == -1);
   assert(output_fd > 2 || output_fd == -1);
@@ -46,46 +47,126 @@ static void run_child(char **args, int input_fd, int output_fd) {
 // Takes an input filename and opens the file
 // On success return the corresponding file descriptor
 // On failure return -1
-// Constraint: filename is defined
-static int open_input_file(const char *input_filename) {
-  assert(input_filename != NULL);
+// Constraint: filename != NULL
+static int open_input_file(const char *filename) {
+  assert(filename != NULL);
 
-  int input_fd;
-  if ((input_fd = open(input_filename, O_RDONLY)) < 0) {
-    perror(input_filename);
+  int fd;
+  if ((fd = open(filename, O_RDONLY)) < 0) {
+    perror(filename);
     return -1;
   }
-
-  return input_fd;
+  return fd;
 }
 
 // Takes an output filename and a redirection
 // Opens the file with access modes depending on the redirection
 // On success return the corresponding file descriptor
 // On failure return -1
-// Constraint: filename is defined
-static int open_output_file(const char *output_filename,
-                            Redirection output_redir) {
-  assert(output_filename != NULL);
+// Constraint: filename != NULL
+static int open_output_file(const char *filename,
+                            Redirection redir) {
+  assert(filename != NULL);
 
-  int output_fd;
-  switch (output_redir) {
+  int fd;
+  switch (redir) {
   case REDIR_OUTPUT_APPEND:
-    output_fd = open(output_filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    fd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0644);
     break;
   case REDIR_OUTPUT:
-    output_fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     break;
   default:
     printf("Error: invalid state reached\n");
     abort();
   }
 
-  if (output_fd < 0) {
-    perror(output_filename);
+  if (fd < 0) {
+    perror(filename);
     return -1;
   }
-  return output_fd;
+  return fd;
+}
+
+// Takes an input buffer: one of filename or here-document delimiter
+// Opens the input buffer and returns the corresponding file descriptor
+// Returns -1 on failure, >2 on success
+// Constraint: (filename != NULL) ^ (here_doc_delim != NULL)
+// Constraint: (redir == REDIR_HERE_DOC) ^ (redir == REDIR_INPUT)
+int prepare_input_fd(const char *filename, const char *here_doc_delim,
+                     Redirection redir) {
+  assert((filename != NULL) ^ (here_doc_delim != NULL));
+  assert((redir == REDIR_HERE_DOC) ^ (redir == REDIR_INPUT));
+  int fd;
+  switch (redir) {
+  case REDIR_HERE_DOC:
+    // Create temporary file for here-document
+    char path[] = "/tmp/heredocbuffer.XXXXXX";
+    fd = mkstemp(path);
+    if (fd < 3) {
+      // The program relies on STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO
+      // reserving file descriptors 0-2, and -1 is returned for failed mkstemp
+      perror("mkstemp");
+      return -1;
+    }
+
+    // Here-document logic
+    char buffer[INPUT_BUFFER];
+    int n = strlen(here_doc_delim);
+    while (true) {
+      printf("> ");
+      if (fgets(buffer, sizeof(buffer), stdin) == NULL)
+        break;
+      if (strncmp(buffer, here_doc_delim, n) == 0) {
+        break;
+      } else {
+        write(fd, buffer, strlen(buffer));
+      }
+    }
+
+    // Rewind pointer and mkstemp clean-up
+    unlink(path);
+    if (lseek(fd, 0, SEEK_SET) == -1) {
+      perror("lseek");
+      close(fd);
+      return -1;
+    }
+    return fd;
+
+  case REDIR_INPUT:
+    if ((fd = open_input_file(filename)) < 3) {
+      // The program relies on STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO
+      // reserving file descriptors 0-2, and -1 is returned for a failed
+      // open_input_file call
+      printf("prepare_input_fd: invalid input file descriptor\n");
+      return -1;
+    }
+    return fd;
+
+  default:
+    printf("prepare_input_fd: invalid input redirection\n");
+    abort();
+  }
+}
+
+// Takes an output buffer and output redirection
+// Opens the output buffer and returns the corresponding file descriptor
+// Returns -1 on failure, >2 on success
+// Constraint: output_filename != NULL
+// Constraint: (redir == REDIR_OUTPUT) ^ (redir == REDIR_OUTPUT_APPEND)
+int prepare_output_fd(const char *filename, Redirection redir) {
+  assert(filename != NULL);
+  assert((redir == REDIR_OUTPUT) ^ (redir == REDIR_OUTPUT_APPEND));
+  int fd;
+  if ((fd = open_output_file(filename, redir)) < 3) {
+    // The program relies on STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO
+    // reserving file descriptors 0-2, and -1 is returned for a failed
+    // open_output_file call
+    printf("prepare_output_fd: invalid output file descriptor\n");
+    return -1;
+  }
+
+  return fd;
 }
 
 // Takes parsed tokens

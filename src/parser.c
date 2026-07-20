@@ -191,9 +191,7 @@ ParseResult parse(char *inp) {
   } else {
     char *input_filename = input_redir == REDIR_INPUT ? input : NULL;
     char *output_filename =
-        output_redir == REDIR_OUTPUT || output_redir == REDIR_OUTPUT_APPEND
-            ? output
-            : NULL;
+        output_redir == (REDIR_OUTPUT || REDIR_OUTPUT_APPEND) ? output : NULL;
 
     int error;
     if (here_doc_found) {
