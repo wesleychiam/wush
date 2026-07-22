@@ -43,8 +43,9 @@ ParseResult parse(char *inp) {
   Redirection input_redir = REDIR_NONE;
 
   // Pipe variables
-  int pipe_start = 0;
-  bool pipe_found = false;
+  int nstages = 0;
+  int stage_start[MAX_ARGS];
+  stage_start[nstages++] = 0;
 
   // Here-document & filename buffer variables
   char here_doc_delim[FILENAME_BUFFER];
@@ -97,13 +98,13 @@ ParseResult parse(char *inp) {
         break;
       case REDIR_NONE:
         // Parse pipe logic
-        if (is_pipe && pipe_found) {
-          printf("parse: more than one pipe detected\n");
+        if (is_pipe && args[nargs - 1] == NULL) {
+          // Consecutive pipes
+          printf("Usage: <command> | <command>\n");
           return PARSE_FAIL;
         } else if (is_pipe) {
           args[nargs++] = NULL;
-          pipe_found = true;
-          pipe_start = nargs;
+          stage_start[nstages++] = nargs;
         } else {
           args[nargs++] = token;
         }
@@ -162,15 +163,19 @@ ParseResult parse(char *inp) {
     token = strtok_r(NULL, delims, &ptr);
   }
 
+  // Sentinel-terminated arrays
+  args[nargs] = NULL;
+  stage_start[nstages] = -1;
+
   // Check for incomplete redirection command
   if (state != ARGUMENT) {
     printf("parse: expected filename\n");
     return PARSE_FAIL;
   }
-  args[nargs] = NULL;
 
   // Check for incomplete pipe command
-  if (pipe_found && (pipe_start == 1 || pipe_start == nargs)) {
+  bool pipe_found = nstages > 1;
+  if (pipe_found && (stage_start[1] == 1 || stage_start[nstages - 1] == nargs)) {
     printf("Usage: <command> | <command>\n");
     return PARSE_FAIL;
   }
@@ -187,10 +192,8 @@ ParseResult parse(char *inp) {
     }
     return PARSE_OK;
   } else {
-    // External command
     if (external_command(args, input_filename, here_doc_delim, input_redir,
-                         output_filename, output_redir, pipe_found,
-                         pipe_start)) {
+                         output_filename, output_redir, pipe_found, stage_start, nstages)) {
       return PARSE_FAIL;
     }
 

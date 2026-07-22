@@ -189,13 +189,13 @@ int builtin_cd(char **args, int nargs) {
   return status;
 }
 
-// Takes parsed tokens, pipe start index, and I/O file descriptors
+// Takes parsed tokens, stage start indices, and I/O file descriptors
 // Processes pipe instructions
 // On success return 0
 // On failure exit or return non-zero
-// Constraint: pipe_start > 1
-int exec_pipe(char **args, int pipe_start, int input_fd, int output_fd) {
-  assert(pipe_start > 1);
+// Constraint: nstages > 1
+int exec_pipe(char **args, int *stage_start, int nstages, int input_fd, int output_fd) {
+  assert(nstages > 1);
   // Create pipe
   int pipefd[2];
   if (pipe(pipefd) < 0) {
@@ -246,7 +246,7 @@ int exec_pipe(char **args, int pipe_start, int input_fd, int output_fd) {
     close(pipefd[1]);
     if (input_fd > 2)
       close(input_fd);
-    run_child(args + pipe_start, pipefd[0], output_fd);
+    run_child(args + stage_start[1], pipefd[0], output_fd);
     // run_child must terminate the child and therefore does not return
     abort();
   }
@@ -281,12 +281,13 @@ static int exec_cmd(char **args, int input_fd, int output_fd) {
     perror("fork");
     return 1;
   } else if (pid == 0) {
-    // Child logic
+    // Child
     run_child(args, input_fd, output_fd);
     // run_child must terminate and there does not return
     printf("run_child: failed to terminate child\n");
     abort();
   } else {
+    // Parent
     if (input_fd > 2)
       close(input_fd);
     if (output_fd > 2)
@@ -306,7 +307,7 @@ static int exec_cmd(char **args, int input_fd, int output_fd) {
 int external_command(char **args, const char *input_filename,
                      const char *here_doc_delim, Redirection input_redir,
                      const char *output_filename, Redirection output_redir,
-                     bool pipe_found, int pipe_start) {
+                     bool pipe_found, int *stage_start, int nstages) {
   int input_fd = -1;
   int output_fd = -1;
 
@@ -334,7 +335,7 @@ int external_command(char **args, const char *input_filename,
   }
 
   if (pipe_found) {
-    return exec_pipe(args, pipe_start, input_fd, output_fd);
+    return exec_pipe(args, stage_start, nstages, input_fd, output_fd);
   } else {
     return exec_cmd(args, input_fd, output_fd);
   }
