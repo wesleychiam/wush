@@ -175,7 +175,8 @@ ParseResult parse(char *inp) {
 
   // Check for incomplete pipe command
   bool pipe_found = nstages > 1;
-  if (pipe_found && (stage_start[1] == 1 || stage_start[nstages - 1] == nargs)) {
+  if (pipe_found &&
+      (stage_start[1] == 1 || stage_start[nstages - 1] == nargs)) {
     printf("Usage: <command> | <command>\n");
     return PARSE_FAIL;
   }
@@ -193,7 +194,8 @@ ParseResult parse(char *inp) {
     return PARSE_OK;
   } else {
     if (external_command(args, input_filename, here_doc_delim, input_redir,
-                         output_filename, output_redir, pipe_found, stage_start, nstages)) {
+                         output_filename, output_redir, pipe_found, stage_start,
+                         nstages)) {
       return PARSE_FAIL;
     }
 

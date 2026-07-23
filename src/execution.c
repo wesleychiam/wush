@@ -190,80 +190,99 @@ int builtin_cd(char **args, int nargs) {
 }
 
 // Takes parsed tokens, stage start indices, and I/O file descriptors
-// Processes pipe instructions
+// Processes pipe instructions and closes file descriptors
 // On success return 0
 // On failure exit or return non-zero
 // Constraint: nstages > 1
-int exec_pipe(char **args, int *stage_start, int nstages, int input_fd, int output_fd) {
+int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
+               int output_fd) {
   assert(nstages > 1);
-  // Create pipe
+
+  int prev_read_fd = -1;
   int pipefd[2];
-  if (pipe(pipefd) < 0) {
-    if (input_fd > 2)
+  pid_t pids[nstages];
+
+  for (int i = 0; i < nstages; i++) {
+    bool is_start = (i == 0);
+    bool is_last = (i == nstages - 1);
+
+    if (!is_last) {
+      if (pipe(pipefd) < 0) {
+        if (input_fd > 2)
+          close(input_fd);
+        if (output_fd > 2)
+          close(output_fd);
+        if (prev_read_fd > 2)
+          close(prev_read_fd);
+        perror("exec_pipe");
+        return 1;
+      }
+    }
+    
+    int child_input = is_start ? input_fd : prev_read_fd;
+    int child_output = is_last ? output_fd : pipefd[1];
+
+    pid_t pid = fork();
+    pids[i] = pid;
+    if (pid < 0) {
+      if (input_fd > 2)
+        close(input_fd);
+      if (output_fd > 2)
+        close(output_fd);
+      if (prev_read_fd > 2)
+        close(prev_read_fd);
+      if (!is_last) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+      }
+      perror("exec_pipe");
+      return 1;
+    } else if (pid == 0) {
+      // Child
+      if (is_start) {
+        if (output_fd > 2) close(output_fd);
+        close(pipefd[0]);
+      }
+      if (is_last) {
+        if (input_fd > 2) close(input_fd);
+      }
+      if (!is_start && !is_last) {
+        if (input_fd > 2) close(input_fd);
+        if (output_fd > 2) close(output_fd);
+        close(pipefd[0]);
+      }
+      run_child(args + stage_start[i], child_input, child_output);
+      printf("exec_pipe: failed to terminate child\n");
+      abort();
+    }
+    // Parent
+    if (is_start && input_fd > 2) {
       close(input_fd);
-    if (output_fd > 2)
+      input_fd = -1;
+    }
+    if (prev_read_fd > 2) close(prev_read_fd);
+    if (!is_last) {
+      close(pipefd[1]);
+      prev_read_fd = pipefd[0];
+    }
+    if (is_last && output_fd > 2) {
       close(output_fd);
-    perror("exec_pipe");
-    return 1;
+      output_fd = -1;
+    }
   }
 
-  // Left command parent
-  pid_t l_pid = fork();
-  int l_status;
-  if (l_pid < 0) {
-    close(pipefd[0]);
-    close(pipefd[1]);
-    if (input_fd > 2)
-      close(input_fd);
-    if (output_fd > 2)
-      close(output_fd);
-    perror("fork");
-    return 1;
-  } else if (l_pid == 0) {
-    // Left child
-    close(pipefd[0]);
-    if (output_fd > 2)
-      close(output_fd);
-    run_child(args, input_fd, pipefd[1]);
-    // run_child must terminate the child and therefore does not return
-    abort();
-  }
-  // Right command parent
-  pid_t r_pid = fork();
-  int r_status;
-  if (r_pid < 0) {
-    close(pipefd[0]);
-    close(pipefd[1]);
-    if (input_fd > 2)
-      close(input_fd);
-    if (output_fd > 2)
-      close(output_fd);
-    perror("fork");
-    waitpid(l_pid, &l_status, 0);
-    return 1;
-  } else if (r_pid == 0) {
-    // Right child
-    close(pipefd[1]);
-    if (input_fd > 2)
-      close(input_fd);
-    run_child(args + stage_start[1], pipefd[0], output_fd);
-    // run_child must terminate the child and therefore does not return
-    abort();
-  }
   // Parent
-  close(pipefd[0]);
-  close(pipefd[1]);
-  if (input_fd > 2)
-    close(input_fd);
-  if (output_fd > 2)
-    close(output_fd);
-  waitpid(l_pid, &l_status, 0);
-  waitpid(r_pid, &r_status, 0);
-
-  if (WIFEXITED(l_status) && WIFEXITED(r_status)) {
-    return WEXITSTATUS(r_status);
+  int status;
+  bool wait_failed = false;
+  for (int i = 0; i < nstages; i++) {
+    if (waitpid(pids[i], &status, 0) < 0) {
+      perror("waitpid");
+      wait_failed = true;
+    }
   }
-  return 1;
+
+  if (wait_failed) return 1;
+  return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 }
 
 // Takes parsed tokens and opened I/O file descriptors
@@ -335,7 +354,7 @@ int external_command(char **args, const char *input_filename,
   }
 
   if (pipe_found) {
-    return exec_pipe(args, stage_start, nstages, input_fd, output_fd);
+    return exec_pipe2(args, stage_start, nstages, input_fd, output_fd);
   } else {
     return exec_cmd(args, input_fd, output_fd);
   }
