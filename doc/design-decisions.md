@@ -104,3 +104,37 @@ Their contract requires the filenames (or delimiters for a here-document) to be
 non-null. Null filenames/no redirection are handled by their caller function 
 `external_command`. They open the file and return `-1` indicating failure or a
 descriptor `>2` indicating success.
+
+# v3
+`exec_pipe` now accepts an array of integers `stage_start` instead of a singular
+integer `pipe_start` to represent the index at the start of each stage in the
+pipeline in the shared `args` array.
+This is compatible with the `args` array, as it allows `run_child` calls to 
+accept `args + stage_start[i]` instead of other approaches; for example,
+individual argument arrays for each pipeline, which would overlap with the
+values in `args` and makes the pipe chaining difficult.
+Furthermore, to keep pipe chaining simple, a "rolling-pipe" approach was used,
+where a new pipe is created for every connection each stage, but the same array
+`pipefd` is reused. This is favoured over creating or storing new pipes for each
+stage as the closing logic can get messy for a command with many pipes.
+The parent process forks all stages before waiting for any child process. It
+stores child processes in a `pids` array, and the parent calls `waitpid` to wait
+for every child process after the primary pipeline `for` loop. This prevents a
+deadlock from occuring where the parent blocks the current stage, due to some
+corresponding file descriptor only being closed in a future stage. It scans each
+child in the same order that they are forked, which enables a `status` value to
+be read and overwritten to by the parent.
+Since it only executes pipe instructions, its contract asserts that there is at
+least two stages in the command. This keeps the function to its intended usage.
+It retains the responsibility of closing I/O file descriptors and handling
+execution errors. It is not responsible for exiting, unless aborting or in the
+child, in order to propagate the error to `external_command`.
+Once an I/O file descriptor is closed, it is set to `-1`. This prevents the
+child in the `for` loop closing a file descriptor that is already closed, which
+causes an error in `run_child`, leading to a crash in a valid pipe command.
+There is also a possibility of the child reading the closed I/O descriptor
+number, and calling `close` closes a different process that has the same
+descriptor number, where a later `pipe` call reuses the same descriptor number.
+As per convention, the child status of the final stage is returned as the
+overall status code if the entire operation succeeds. Otherwise, it will return 
+`1` if any `waitpid` call fails, as the status codes cannot be reliably read.

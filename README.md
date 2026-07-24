@@ -5,7 +5,7 @@ A Unix shell implemented from scratch in C.
 The program will repeatedly prompt the user until they wish to exit. It features
 built-in commands such as exit and cd, and external commands, for example: `ls`,
 `pwd`, `whoami`. It also has redirection capabilities using `<`, `>`, `>>`, and
-the here-document `<<`, as well as a single pipe `|` between two commands.
+the here-document `<<`, as well as pipes `|` between two commands.
 
 ## Startup
 To initialise the program, run in terminal:
@@ -15,7 +15,7 @@ To initialise the program, run in terminal:
     ./main
 ```
 
-## Example usage
+## Example usages
 Example usage of external commands, after running the above commands:
 ```sh
     wush> cd bad_path
@@ -28,7 +28,7 @@ Example usage of external commands, after running the above commands:
     wush> exit
 ```
 
-Example usage of redirection and pipe commands:
+Example usage of redirection and simple pipe commands:
 ```sh
     wush> echo hello world > file1.txt
     wush> echo line 2 >> file1.txt
@@ -42,17 +42,32 @@ Example usage of redirection and pipe commands:
     4
 ```
 
-## Limitations
-The shell only supports one pipe `|` between two commands, so commands with
-multiple pipes are currently rejected by the parser, returning an error message.
+Example usage of multi-stage pipelines:
+```sh
+    wush> printf pear\napple\nbanana\n
+    pear
+    apple
+    banana
+    wush> printf pear\napple\nbanana\n | sort
+    apple
+    banana
+    pear
+    wush> printf pear\napple\nbanana\n | sort | head -n 1
+    apple
+```
 
-Another limitation of the shell is the parser requiring commands to be separated
-by whitespace, so running a command such as `cat<file1.txt` will result in an
+## Limitations
+A limitation of the shell is the parser requiring commands to be separated by
+whitespace, so running a command such as `cat<file1.txt` will result in an
 `execvp` failure and not execute.
 
-The shell relies on `STDIN`, `STDOUT`, and `STDERR` open and reserving file
+The shell relies on standard input, standard output, and standard error occupy
 descriptors 0-2 for redirection functionality.
 
+Quoted inputs and escaped whitespace are not currently parsed. Text between
+quotation marks will be split into separate arguments.
+
 ## Plans
-Main planned feature for v3 is support for pipelines containing more than two
-commands.
+- Support quoted arguments and escaped whitespace.
+- Improve parser syntax validation and error messages.
+- Signal handling, such as `^C`.

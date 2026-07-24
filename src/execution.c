@@ -354,7 +354,7 @@ int external_command(char **args, const char *input_filename,
   }
 
   if (pipe_found) {
-    return exec_pipe2(args, stage_start, nstages, input_fd, output_fd);
+    return exec_pipe(args, stage_start, nstages, input_fd, output_fd);
   } else {
     return exec_cmd(args, input_fd, output_fd);
   }
