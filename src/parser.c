@@ -39,7 +39,7 @@ static Redirection get_redirection(const char *token) {
 // pointer for repeat calls to parse tokenised string
 // Uses a read state to separate tokens involving escapes and quotation marks
 // Returns pointer to first token in string, or NULL if no tokens remain
-// Modifies original string by inserting '\0' in delimiter slots
+// Modifies original string by '\0' insertion and escape/quotation overwrites
 // Constraint: saveptr != NULL
 // Constraint: delim != NULL
 static char *strtok_erq(char *str, const char *delim, char **saveptr) {
@@ -49,9 +49,11 @@ static char *strtok_erq(char *str, const char *delim, char **saveptr) {
   // End case
   if (str == NULL && *saveptr == NULL)
     return NULL;
-  // Set read pointer
+  // Set initial state and pointers
   char *read_ptr;
+  char *write_ptr;
   char *output_ptr;
+  ReadState read_state = READ_NORMAL;
   if (str == NULL) {
     read_ptr = *saveptr;
   } else {
@@ -61,21 +63,53 @@ static char *strtok_erq(char *str, const char *delim, char **saveptr) {
   while (*read_ptr != '\0' && strchr(delim, *read_ptr) != NULL) {
     read_ptr++;
   }
-  // Set output pointer
+  // Update pointers
   if (*read_ptr == '\0') {
     *saveptr = NULL;
     return NULL;
   }
+  write_ptr = read_ptr;
   output_ptr = read_ptr;
   // Scan until end/next delimiter
-  while (*read_ptr != '\0' && strchr(delim, *read_ptr) == NULL) {
-    read_ptr++;
+  while (*read_ptr != '\0' &&
+         (strchr(delim, *read_ptr) == NULL || read_state != READ_NORMAL)) {
+    assert(read_ptr >= write_ptr);
+    switch (read_state) {
+    case READ_DOUBLE_QUOTE:
+      if (*read_ptr == '"') {
+        read_state = READ_NORMAL;
+        read_ptr++;
+      } else {
+        *write_ptr = *read_ptr;
+        write_ptr++;
+        read_ptr++;
+      }
+      break;
+    case READ_SINGLE_QUOTE:
+    case READ_NORMAL:
+      switch (*read_ptr) {
+      case '"':
+        read_state = READ_DOUBLE_QUOTE;
+        read_ptr++;
+        break;
+      default:
+        *write_ptr = *read_ptr;
+        write_ptr++;
+        read_ptr++;
+        break;
+      }
+      break;
+    default:
+      printf("strtok_erq: invalid state reached\n");
+      abort();
+    }
   }
   // Insert null-terminator
   if (*read_ptr == '\0') {
+    *write_ptr = '\0';
     *saveptr = NULL;
   } else {
-    *read_ptr = '\0';
+    *write_ptr = '\0';
     read_ptr++;
     *saveptr = read_ptr;
   }
@@ -213,7 +247,7 @@ ParseResult parse(char *inp) {
       parse_state = ARGUMENT;
     }
 
-    token = strtok_r(NULL, delims, &ptr);
+    token = strtok_erq(NULL, delims, &ptr);
   }
 
   // Sentinel-terminated arrays
