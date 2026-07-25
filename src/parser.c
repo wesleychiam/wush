@@ -1,6 +1,7 @@
 #include "parser.h"
 #include "execution.h"
 
+#include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,8 @@ typedef enum {
   ARGUMENT
 } ParseState;
 
+typedef enum { READ_DOUBLE_QUOTE, READ_SINGLE_QUOTE, READ_NORMAL } ReadState;
+
 // Parses tokens according to the redirection operator
 // Returns the corresponding enum type, otherwise REDIR_NONE
 static Redirection get_redirection(const char *token) {
@@ -31,13 +34,61 @@ static Redirection get_redirection(const char *token) {
   return REDIR_NONE;
 }
 
+// Tokenises a string based on delimiters, quotations, and escapes.
+// Takes a pointer to string to be tokenised, a string of all delimiters, and a
+// pointer for repeat calls to parse tokenised string
+// Uses a read state to separate tokens involving escapes and quotation marks
+// Returns pointer to first token in string, or NULL if no tokens remain
+// Modifies original string by inserting '\0' in delimiter slots
+// Constraint: saveptr != NULL
+// Constraint: delim != NULL
+static char *strtok_erq(char *str, const char *delim, char **saveptr) {
+  assert(saveptr != NULL);
+  assert(delim != NULL);
+
+  // End case
+  if (str == NULL && *saveptr == NULL)
+    return NULL;
+  // Set read pointer
+  char *read_ptr;
+  char *output_ptr;
+  if (str == NULL) {
+    read_ptr = *saveptr;
+  } else {
+    read_ptr = str;
+  }
+  // Skip leading delimiters
+  while (*read_ptr != '\0' && strchr(delim, *read_ptr) != NULL) {
+    read_ptr++;
+  }
+  // Set output pointer
+  if (*read_ptr == '\0') {
+    *saveptr = NULL;
+    return NULL;
+  }
+  output_ptr = read_ptr;
+  // Scan until end/next delimiter
+  while (*read_ptr != '\0' && strchr(delim, *read_ptr) == NULL) {
+    read_ptr++;
+  }
+  // Insert null-terminator
+  if (*read_ptr == '\0') {
+    *saveptr = NULL;
+  } else {
+    *read_ptr = '\0';
+    read_ptr++;
+    *saveptr = read_ptr;
+  }
+  return output_ptr;
+}
+
 // Takes input string, representing prompted user input
 // Decomposes string into corresponding instruction(s)
 // Delegates to respective processes or handles errors
 // Returns PARSE_FAIL if user enters a bad/unknown command
 ParseResult parse(char *inp) {
   // Redirection variables
-  ParseState state = ARGUMENT;
+  ParseState parse_state = ARGUMENT;
   Redirection arg = REDIR_NONE;
   Redirection output_redir = REDIR_NONE;
   Redirection input_redir = REDIR_NONE;
@@ -55,21 +106,22 @@ ParseResult parse(char *inp) {
   // First pass: split input string into tokens
   char *delims = " \t\n";
   char *ptr;
-  char *token = strtok_r(inp, delims, &ptr);
+  char *token = strtok_erq(inp, delims, &ptr);
   char *args[MAX_ARGS];
   int nargs = 0;
 
   while (token != NULL && nargs < MAX_ARGS - 1) {
     arg = get_redirection(token);
     bool is_pipe = strcmp(token, "|") == 0;
-    if (state == ARGUMENT) {
+    if (parse_state == ARGUMENT) {
+      // Compare argument to redirection (or ordinary argument/pipe)
       switch (arg) {
       case REDIR_INPUT:
         if (input_redir != REDIR_NONE) {
           printf("parse: multiple input streams detected\n");
           return PARSE_FAIL;
         }
-        state = EXPECT_INPUT;
+        parse_state = EXPECT_INPUT;
         input_redir = REDIR_INPUT;
         break;
       case REDIR_HERE_DOC:
@@ -77,7 +129,7 @@ ParseResult parse(char *inp) {
           printf("parse: multiple input streams detected\n");
           return PARSE_FAIL;
         }
-        state = EXPECT_HERE_DOC;
+        parse_state = EXPECT_HERE_DOC;
         input_redir = REDIR_HERE_DOC;
         break;
       case REDIR_OUTPUT:
@@ -85,7 +137,7 @@ ParseResult parse(char *inp) {
           printf("parse: multiple output streams detected\n");
           return PARSE_FAIL;
         }
-        state = EXPECT_OUTPUT;
+        parse_state = EXPECT_OUTPUT;
         output_redir = REDIR_OUTPUT;
         break;
       case REDIR_OUTPUT_APPEND:
@@ -93,13 +145,13 @@ ParseResult parse(char *inp) {
           printf("parse: multiple output streams detected\n");
           return PARSE_FAIL;
         }
-        state = EXPECT_OUTPUT_APPEND;
+        parse_state = EXPECT_OUTPUT_APPEND;
         output_redir = REDIR_OUTPUT_APPEND;
         break;
       case REDIR_NONE:
         // Parse pipe logic
         if (is_pipe && args[nargs - 1] == NULL) {
-          // Consecutive pipes
+          // Consecutive pipes seen: <command> | |
           printf("Usage: <command> | <command>\n");
           return PARSE_FAIL;
         } else if (is_pipe) {
@@ -115,6 +167,7 @@ ParseResult parse(char *inp) {
       }
 
     } else {
+      // Prepare to copy filename/delimiter
       if (strlen(token) >= FILENAME_BUFFER) {
         printf("parse: filename exceeds buffer capacity: %d\n",
                FILENAME_BUFFER);
@@ -123,7 +176,7 @@ ParseResult parse(char *inp) {
 
       // Do not accept filenames named as a redirection operator or a pipe
       if (arg != REDIR_NONE || is_pipe) {
-        switch (state) {
+        switch (parse_state) {
         case EXPECT_INPUT:
           printf("parse: expected filename after '<'\n");
           return PARSE_FAIL;
@@ -142,7 +195,7 @@ ParseResult parse(char *inp) {
         }
       }
 
-      switch (state) {
+      switch (parse_state) {
       case EXPECT_INPUT:
         strcpy(input_filename, token);
         break;
@@ -157,7 +210,7 @@ ParseResult parse(char *inp) {
         printf("parse: invalid state reached\n");
         abort();
       }
-      state = ARGUMENT;
+      parse_state = ARGUMENT;
     }
 
     token = strtok_r(NULL, delims, &ptr);
@@ -168,7 +221,7 @@ ParseResult parse(char *inp) {
   stage_start[nstages] = -1;
 
   // Check for incomplete redirection command
-  if (state != ARGUMENT) {
+  if (parse_state != ARGUMENT) {
     printf("parse: expected filename\n");
     return PARSE_FAIL;
   }

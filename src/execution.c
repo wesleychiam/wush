@@ -195,7 +195,7 @@ int builtin_cd(char **args, int nargs) {
 // On failure exit or return non-zero
 // Constraint: nstages > 1
 int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
-               int output_fd) {
+              int output_fd) {
   assert(nstages > 1);
 
   int prev_read_fd = -1;
@@ -218,7 +218,7 @@ int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
         return 1;
       }
     }
-    
+
     int child_input = is_start ? input_fd : prev_read_fd;
     int child_output = is_last ? output_fd : pipefd[1];
 
@@ -240,15 +240,19 @@ int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
     } else if (pid == 0) {
       // Child
       if (is_start) {
-        if (output_fd > 2) close(output_fd);
+        if (output_fd > 2)
+          close(output_fd);
         close(pipefd[0]);
       }
       if (is_last) {
-        if (input_fd > 2) close(input_fd);
+        if (input_fd > 2)
+          close(input_fd);
       }
       if (!is_start && !is_last) {
-        if (input_fd > 2) close(input_fd);
-        if (output_fd > 2) close(output_fd);
+        if (input_fd > 2)
+          close(input_fd);
+        if (output_fd > 2)
+          close(output_fd);
         close(pipefd[0]);
       }
       run_child(args + stage_start[i], child_input, child_output);
@@ -260,7 +264,8 @@ int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
       close(input_fd);
       input_fd = -1;
     }
-    if (prev_read_fd > 2) close(prev_read_fd);
+    if (prev_read_fd > 2)
+      close(prev_read_fd);
     if (!is_last) {
       close(pipefd[1]);
       prev_read_fd = pipefd[0];
@@ -281,7 +286,8 @@ int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
     }
   }
 
-  if (wait_failed) return 1;
+  if (wait_failed)
+    return 1;
   return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 }
 
