@@ -20,92 +20,166 @@ typedef enum {
 
 typedef enum { READ_DOUBLE_QUOTE, READ_SINGLE_QUOTE, READ_NORMAL } ReadState;
 
-// Parses tokens according to the redirection operator
+typedef enum {
+  TOKEN_OK,
+  TOKEN_UNMATCHED_QUOTATION,
+  TOKEN_HANGING_ESCAPE
+} TokenState;
+
+// Parses tokens according to the redirection symbol if it is an operator
 // Returns the corresponding enum type, otherwise REDIR_NONE
-static Redirection get_redirection(const char *token) {
-  if (strcmp("<", token) == 0)
+static Redirection get_redirection(const char *token, bool is_operator) {
+  if (strcmp("<", token) == 0 && is_operator)
     return REDIR_INPUT;
-  if (strcmp("<<", token) == 0)
+  if (strcmp("<<", token) == 0 && is_operator)
     return REDIR_HERE_DOC;
-  if (strcmp(">", token) == 0)
+  if (strcmp(">", token) == 0 && is_operator)
     return REDIR_OUTPUT;
-  if (strcmp(">>", token) == 0)
+  if (strcmp(">>", token) == 0 && is_operator)
     return REDIR_OUTPUT_APPEND;
   return REDIR_NONE;
 }
 
 // Tokenises a string based on delimiters, quotations, and escapes.
-// Takes a pointer to string to be tokenised, a string of all delimiters, and a
-// pointer for repeat calls to parse tokenised string
+// Takes a pointer to string to be tokenised, a string of all delimiters, a
+// pointer for repeat calls to parse tokenised string, a pointer for indicating
+// shell operators, and a token state pointer.
 // Uses a read state to separate tokens involving escapes and quotation marks
-// Returns pointer to first token in string, or NULL if no tokens remain
-// Modifies original string by '\0' insertion and escape/quotation overwrites
+// Returns pointer to first token in string, or NULL if no tokens remain.
+// Modifies original string by '\0' insertion and escape/quotation overwrites.
 // Constraint: saveptr != NULL
 // Constraint: delim != NULL
-static char *strtok_erq(char *str, const char *delim, char **saveptr) {
+static char *strtok_erq(char *str, const char *delim, char **saveptr,
+                        bool *is_operator, TokenState *token_state) {
   assert(saveptr != NULL);
   assert(delim != NULL);
+  assert(is_operator != NULL);
+  assert(token_state != NULL);
 
   // End case
-  if (str == NULL && *saveptr == NULL)
+  if (str == NULL && *saveptr == NULL) {
+    *token_state = TOKEN_OK;
     return NULL;
+  }
   // Set initial state and pointers
   char *read_ptr;
   char *write_ptr;
   char *output_ptr;
+  *token_state = TOKEN_OK;
   ReadState read_state = READ_NORMAL;
   if (str == NULL) {
     read_ptr = *saveptr;
   } else {
     read_ptr = str;
   }
+  *is_operator = true;
   // Skip leading delimiters
   while (*read_ptr != '\0' && strchr(delim, *read_ptr) != NULL) {
     read_ptr++;
   }
-  // Update pointers
+  // Update pointers and add escape state
   if (*read_ptr == '\0') {
     *saveptr = NULL;
     return NULL;
   }
   write_ptr = read_ptr;
   output_ptr = read_ptr;
+  bool escaped = false;
   // Scan until end/next delimiter
   while (*read_ptr != '\0' &&
-         (strchr(delim, *read_ptr) == NULL || read_state != READ_NORMAL)) {
+         (strchr(delim, *read_ptr) == NULL || read_state != READ_NORMAL ||
+          (escaped && *read_ptr != '\n'))) {
     assert(read_ptr >= write_ptr);
     switch (read_state) {
     case READ_DOUBLE_QUOTE:
-      if (*read_ptr == '"') {
-        read_state = READ_NORMAL;
-        read_ptr++;
-      } else {
+      switch (*read_ptr) {
+      case '\\':
+        if (escaped) {
+          *write_ptr = *read_ptr;
+          write_ptr++;
+          read_ptr++;
+          escaped = false;
+        } else {
+          escaped = true;
+          read_ptr++;
+        }
+        break;
+      case '"':
+        if (escaped) {
+          *write_ptr = *read_ptr;
+          write_ptr++;
+          read_ptr++;
+          escaped = false;
+        } else {
+          read_state = READ_NORMAL;
+          read_ptr++;
+        }
+        break;
+      default:
+        if (escaped) {
+          *write_ptr = '\\';
+          write_ptr++;
+          escaped = false;
+        }
         *write_ptr = *read_ptr;
         write_ptr++;
         read_ptr++;
+        break;
       }
       break;
     case READ_SINGLE_QUOTE:
-      if (*read_ptr == '\'') {
+      switch (*read_ptr) {
+      case '\'':
         read_state = READ_NORMAL;
         read_ptr++;
-      } else {
+        break;
+      default:
         *write_ptr = *read_ptr;
         write_ptr++;
         read_ptr++;
+        break;
       }
       break;
     case READ_NORMAL:
       switch (*read_ptr) {
       case '"':
-        read_state = READ_DOUBLE_QUOTE;
-        read_ptr++;
+        *is_operator = false;
+        if (escaped) {
+          *write_ptr = *read_ptr;
+          write_ptr++;
+          read_ptr++;
+          escaped = false;
+        } else {
+          read_state = READ_DOUBLE_QUOTE;
+          read_ptr++;
+        }
         break;
       case '\'':
-        read_state = READ_SINGLE_QUOTE;
-        read_ptr++;
+        *is_operator = false;
+        if (escaped) {
+          *write_ptr = *read_ptr;
+          write_ptr++;
+          read_ptr++;
+          escaped = false;
+        } else {
+          read_state = READ_SINGLE_QUOTE;
+          read_ptr++;
+        }
+        break;
+      case '\\':
+        *is_operator = false;
+        if (escaped) {
+          *write_ptr = *read_ptr;
+          write_ptr++;
+          read_ptr++;
+          escaped = false;
+        } else {
+          escaped = true;
+          read_ptr++;
+        }
         break;
       default:
+        escaped = false;
         *write_ptr = *read_ptr;
         write_ptr++;
         read_ptr++;
@@ -126,6 +200,18 @@ static char *strtok_erq(char *str, const char *delim, char **saveptr) {
     read_ptr++;
     *saveptr = read_ptr;
   }
+  // Check there are no unmatched brackets or hanging escapes
+  if (escaped) {
+    printf("strtok_erq: hanging escape character\n");
+    *token_state = TOKEN_HANGING_ESCAPE;
+    return NULL;
+  }
+  if (read_state != READ_NORMAL) {
+    printf("strtok_erq: unmatched quotation mark\n");
+    *token_state = TOKEN_UNMATCHED_QUOTATION;
+    return NULL;
+  }
+
   return output_ptr;
 }
 
@@ -153,13 +239,27 @@ ParseResult parse(char *inp) {
   // First pass: split input string into tokens
   char *delims = " \t\n";
   char *ptr;
-  char *token = strtok_erq(inp, delims, &ptr);
+  bool is_operator;
+  TokenState token_state;
+  char *token = strtok_erq(inp, delims, &ptr, &is_operator, &token_state);
+  switch (token_state) {
+  case TOKEN_OK:
+    break;
+  case TOKEN_UNMATCHED_QUOTATION:
+    return PARSE_FAIL;
+  case TOKEN_HANGING_ESCAPE:
+    return PARSE_FAIL;
+  default:
+    printf("strtok_erq: invalid state reached\n");
+    abort();
+  }
   char *args[MAX_ARGS];
   int nargs = 0;
 
+  // Read tokens
   while (token != NULL && nargs < MAX_ARGS - 1) {
-    arg = get_redirection(token);
-    bool is_pipe = strcmp(token, "|") == 0;
+    arg = get_redirection(token, is_operator);
+    bool is_pipe = strcmp(token, "|") == 0 && is_operator;
     if (parse_state == ARGUMENT) {
       // Compare argument to redirection (or ordinary argument/pipe)
       switch (arg) {
@@ -197,7 +297,7 @@ ParseResult parse(char *inp) {
         break;
       case REDIR_NONE:
         // Parse pipe logic
-        if (is_pipe && args[nargs - 1] == NULL) {
+        if (is_pipe && (nargs == 0 || args[nargs - 1] == NULL)) {
           // Consecutive pipes seen: <command> | |
           printf("Usage: <command> | <command>\n");
           return PARSE_FAIL;
@@ -260,7 +360,18 @@ ParseResult parse(char *inp) {
       parse_state = ARGUMENT;
     }
 
-    token = strtok_erq(NULL, delims, &ptr);
+    token = strtok_erq(NULL, delims, &ptr, &is_operator, &token_state);
+    switch (token_state) {
+    case TOKEN_OK:
+      break;
+    case TOKEN_UNMATCHED_QUOTATION:
+      return PARSE_FAIL;
+    case TOKEN_HANGING_ESCAPE:
+      return PARSE_FAIL;
+    default:
+      printf("strtok_erq: invalid state reached\n");
+      abort();
+    }
   }
 
   // Sentinel-terminated arrays

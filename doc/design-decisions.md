@@ -142,8 +142,19 @@ overall status code if the entire operation succeeds. Otherwise, it will return
 # v4
 `strtok_erq` is a reentrant version of `strtok` with support for escapes and
 quotes. Replacing the `strtok_r` function with a custom one keeps most of the
-current parser logic unchanged. It uses a `read_ptr` and `write_ptr` to parse
-the tokens because the output size will be less than the input if there are
-quotes or escapes used. The invariant `read_ptr >= write_ptr` is derived by
-this. As it sets `saveptr` similarly to `strtok_r` and only modifies within
-bounds of the input string, the function is safe. 
+current parser logic unchanged with additional features needed in a shell. 
+It uses a `read_ptr` and `write_ptr` to parse the tokens because the cleaned
+token will never be longer than the original representation. The invariant
+`read_ptr >= write_ptr` is derived by this to ensure that unread input is never
+overwritten. The `is_operator` pointer is necessary for the parser to determine
+whether to class certain expressions as an operator or string, for example 
+`echo "|"`. The `token_state` is a status pointer for the parser to show an
+error. This is because `NULL` is returned when there are no more tokens
+remaining, so it cannot be used to represent errors. For simplicity, the parser
+treats encountering a hanging `\` or an unmatched `"` or `'` characters as an
+error. Unlike a normal shell, it does not support multiline continuation.
+The `escaped && *read_ptr != '\n'` condition in the while loop allows the parser
+to parse phrases such as `hello\ world` as one token. The `read_ptr != '\n'`
+check is necessary to catch the trailing backslash error, as the `fgets` call in
+main will add a terminating newline character after a backslash, which is not
+part of the original input and must not be consumed.
