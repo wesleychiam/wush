@@ -138,3 +138,12 @@ descriptor number, where a later `pipe` call reuses the same descriptor number.
 As per convention, the child status of the final stage is returned as the
 overall status code if the entire operation succeeds. Otherwise, it will return 
 `1` if any `waitpid` call fails, as the status codes cannot be reliably read.
+
+# v4
+`strtok_erq` is a reentrant version of `strtok` with support for escapes and
+quotes. Replacing the `strtok_r` function with a custom one keeps most of the
+current parser logic unchanged. It uses a `read_ptr` and `write_ptr` to parse
+the tokens because the output size will be less than the input if there are
+quotes or escapes used. The invariant `read_ptr >= write_ptr` is derived by
+this. As it sets `saveptr` similarly to `strtok_r` and only modifies within
+bounds of the input string, the function is safe. 

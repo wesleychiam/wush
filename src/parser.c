@@ -86,10 +86,23 @@ static char *strtok_erq(char *str, const char *delim, char **saveptr) {
       }
       break;
     case READ_SINGLE_QUOTE:
+      if (*read_ptr == '\'') {
+        read_state = READ_NORMAL;
+        read_ptr++;
+      } else {
+        *write_ptr = *read_ptr;
+        write_ptr++;
+        read_ptr++;
+      }
+      break;
     case READ_NORMAL:
       switch (*read_ptr) {
       case '"':
         read_state = READ_DOUBLE_QUOTE;
+        read_ptr++;
+        break;
+      case '\'':
+        read_state = READ_SINGLE_QUOTE;
         read_ptr++;
         break;
       default:
