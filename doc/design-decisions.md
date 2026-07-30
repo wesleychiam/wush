@@ -1,22 +1,22 @@
 # Design decisions
 
-# v1
+# v1 - the prompt loop and basic commands
 `cd` changes the shell's working directory. It is implemented internally, as the
 child process, if implemented externally via execvp, only the child process
-changes directory before terminating.
+changes directory before the process image is replaced.
 
 `execvp` searches the user's PATH automatically, allowing user commands such as
 `ls` and `pwd` to be executed without the full path.
 
 `fork` creates a child process, which is used to handle the externally
-implemented commands, because the shell must not terminate when running execvp.
+implemented commands, because the shell must not replace its process image when
+running execvp.
 
-# v2
+# v2 - redirection operations, the here-document, and simple pipes
 `-D_POSIX_C_SOURCE=200809L` defines the POSIX interface, with `200809L`
 corresponding to the 2008 POSIX.1-2008 operating system interface. It exposes
 POSIX functions such as `execvp`, `fork`, and `strtok_r`. This version balances
-the availability of newer interfaces and source-code portability of the program,
-so no compiler or platform-specific extensions are relied on.
+the availability of newer interfaces and source-code portability of the program.
 
 Output redirection is parsed by the shell before external command execution, 
 using an `output` string buffer, containing the parsed filename. This is to 
@@ -105,7 +105,7 @@ non-null. Null filenames/no redirection are handled by their caller function
 `external_command`. They open the file and return `-1` indicating failure or a
 descriptor `>2` indicating success.
 
-# v3
+# v3 - multi-stage pipelines
 `exec_pipe` now accepts an array of integers `stage_start` instead of a singular
 integer `pipe_start` to represent the index at the start of each stage in the
 pipeline in the shared `args` array.
@@ -139,7 +139,7 @@ As per convention, the child status of the final stage is returned as the
 overall status code if the entire operation succeeds. Otherwise, it will return 
 `1` if any `waitpid` call fails, as the status codes cannot be reliably read.
 
-# v4
+# v4 - quotation and escape parsing
 `strtok_erq` is a reentrant version of `strtok` with support for escapes and
 quotes. Replacing the `strtok_r` function with a custom one keeps most of the
 current parser logic unchanged with additional features needed in a shell. 
@@ -158,3 +158,60 @@ to parse phrases such as `hello\ world` as one token. The `read_ptr != '\n'`
 check is necessary to catch the trailing backslash error, as the `fgets` call in
 main will add a terminating newline character after a backslash, which is not
 part of the original input and must not be consumed.
+
+# v5 - signal handling and basic process groups
+This version focuses on handling `Ctrl+C` to terminate child processes without
+terminating the shell itself. For example a `wait` command or a `cat` command
+can return to the `wush>` prompt when `Ctrl+C` is pressed.
+
+In `exec_pipe`, the forked children in each stage are moved to a separate
+process group. This is so the entire pipeline's processes are managed as a
+singular job, meaning the terminal sends terminal-generated signals and allows
+input consumption to the child process group, only if the process group is the
+terminal's foreground process group.
+The first child is chosen as the process group leader, because it is the first
+available PID. The PGID must be the PID of the process group leader, so the
+child process group PGID is the PID of the first child.
+In `exec_cmd`, the forked child is moved to a separate process group, and is the
+process group leader.
+
+Both parent and child call `setpgid` to move the child process to the child
+process group to avoid a race. This is because either the parent or child may
+run first, but we require the child to be grouped correctly no matter the order.
+The child may run `execvp` before the parent executes `setpgid`, or the parent
+may call `tcsetpgrp` before the child group is created, for example.
+
+The shell transfers the terminal by `tcsetpgrp`. Initially it is used to make
+the child process group the terminal foreground process group. 
+It reclaims the terminal foreground process group in the same way. However, it
+is a background process group once the child group has become the terminal
+foreground process group. When a background process group attempts to claim the
+terminal, it will raise a `SIGTTOU` with a default action of stopping [the
+shell]. In order to let the shell reclaim the terminal and survive, it must
+ignore this, by setting the `SIGTTOU` signal disposition to `SIG_IGN`.
+
+The parent executes `tcsetpgrp` to assign the child process group to the
+terminal foreground process group before waiting, and then reassigns the shell
+process group as the terminal foreground process group after. It is done in this
+order because the child process group must own the terminal while it is running,
+which is before they are waited for. 
+After waiting, all of the child processes have terminated, so executing
+`tcsetpgrp` to set the non-existent child process group as the terminal
+foreground process group will lead to an error. 
+
+The shell should also not terminate when the user presses `Ctrl+C`. This means
+that it must set the `SIGINT` signal disposition to `SIG_IGN`. So in main, both
+`SIGINT` and `SIGTTOU` signals are ignored by the shell process. 
+The child must restore both of these signals using `restore_signal` for intended
+signal behaviour. Child processes must follow the default action of terminating
+on `SIGINT`.
+
+There exists a possibility where the child execution path may reach `execvp`
+before the parent reaches `tcsetpgrp`. This is a limitation of the current
+implementation: in this case, the child process group will not be considered the
+terminal foreground process group until the parent reaches `tcsetpgrp` for the
+child process group, exposing a window where the child process group will not
+receive terminal generated signals, such as `Ctrl+C`, and the consumption of
+early input, such as `cat`, will send the child group `SIGTTIN` with a default
+action of stopping.
+

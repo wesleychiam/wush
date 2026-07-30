@@ -64,10 +64,5 @@ whitespace, so running a command such as `cat<file1.txt` will result in an
 The shell relies on standard input, standard output, and standard error occupy
 descriptors 0-2 for redirection functionality.
 
-Quoted inputs and escaped whitespace are not currently parsed. Text between
-quotation marks will be split into separate arguments.
-
 ## Plans
-- Support quoted arguments and escaped whitespace.
-- Improve parser syntax validation and error messages.
 - Signal handling, such as `^C`.

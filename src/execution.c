@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +13,24 @@
 #include <unistd.h>
 
 #define COMMAND_NOT_FOUND 127
+
+// Helper function used to restore signal handling
+// Only used in child branches after fork
+// Returns 0 on success, 1 on failure
+static int restore_signal(void) {
+  struct sigaction csa = {0};
+  csa.sa_handler = SIG_DFL;
+  sigemptyset(&csa.sa_mask);
+  if (sigaction(SIGINT, &csa, NULL) == -1) {
+    perror("sigaction");
+    return 1;
+  }
+  if (sigaction(SIGTTOU, &csa, NULL) == -1) {
+    perror("sigaction");
+    return 1;
+  }
+  return 0;
+}
 
 // Takes command arguments, input, and output file descriptors
 // Constraint: input_fd > 2 || input_fd == -1
@@ -201,6 +220,7 @@ int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
   int prev_read_fd = -1;
   int pipefd[2];
   pid_t pids[nstages];
+  pid_t pgid;
 
   for (int i = 0; i < nstages; i++) {
     bool is_start = (i == 0);
@@ -239,6 +259,7 @@ int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
       return 1;
     } else if (pid == 0) {
       // Child
+      // Close unused pipe ends
       if (is_start) {
         if (output_fd > 2)
           close(output_fd);
@@ -254,6 +275,19 @@ int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
         if (output_fd > 2)
           close(output_fd);
         close(pipefd[0]);
+      }
+      // Set process group leader
+      if (is_start) {
+        pgid = getpid();
+      }
+      // Set child to its own process group
+      if (setpgid(0, pgid) == -1) {
+        perror("setpgid");
+        _exit(1);
+      }
+      // Restore default signal behaviour
+      if (restore_signal() == 1) {
+        _exit(1);
       }
       run_child(args + stage_start[i], child_input, child_output);
       printf("exec_pipe: failed to terminate child\n");
@@ -274,9 +308,24 @@ int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
       close(output_fd);
       output_fd = -1;
     }
+    // Set process group leader
+    if (is_start) {
+      pgid = pid;
+    }
+    // Set child to its own process group
+    if (setpgid(pid, pgid) == -1) {
+      perror("setpgid");
+      return 1;
+    }
   }
 
   // Parent
+  // Assign child group to foreground process
+  if (tcsetpgrp(STDIN_FILENO, pgid) == -1) {
+    perror("tcsetpgrp");
+    return 1;
+  }
+  // Wait for children
   int status;
   bool wait_failed = false;
   for (int i = 0; i < nstages; i++) {
@@ -285,7 +334,11 @@ int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
       wait_failed = true;
     }
   }
-
+  // Reassign parent to foreground process
+  if (tcsetpgrp(0, getpid()) == -1) {
+    perror("tcsetpgrp");
+    return 1;
+  }
   if (wait_failed)
     return 1;
   return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
@@ -297,6 +350,7 @@ int exec_pipe(char **args, int *stage_start, int nstages, int input_fd,
 // On failure exit or return non-zero
 static int exec_cmd(char **args, int input_fd, int output_fd) {
   pid_t pid = fork();
+  pid_t pgid = pid;
   int status;
   if (pid < 0) {
     if (input_fd > 2)
@@ -307,6 +361,23 @@ static int exec_cmd(char **args, int input_fd, int output_fd) {
     return 1;
   } else if (pid == 0) {
     // Child
+    // Set child to its own process group
+    if (setpgid(STDIN_FILENO, pgid) == -1) {
+      perror("setpgid");
+      if (input_fd > 2)
+        close(input_fd);
+      if (output_fd > 2)
+        close(output_fd);
+      _exit(1);
+    }
+    // Restore default signal behaviour
+    if (restore_signal() == 1) {
+      if (input_fd > 2)
+        close(input_fd);
+      if (output_fd > 2)
+        close(output_fd);
+      _exit(1);
+    }
     run_child(args, input_fd, output_fd);
     // run_child must terminate and there does not return
     printf("run_child: failed to terminate child\n");
@@ -317,11 +388,22 @@ static int exec_cmd(char **args, int input_fd, int output_fd) {
       close(input_fd);
     if (output_fd > 2)
       close(output_fd);
-    waitpid(pid, &status, 0);
-    if (WIFEXITED(status)) {
-      return WEXITSTATUS(status);
+    // Set child to its own process group
+    if (setpgid(pid, 0) == -1) {
+      perror("setpgid");
+      return 1;
     }
-    return 1;
+    // Assign child group to foreground process
+    if (tcsetpgrp(STDIN_FILENO, pgid) == -1) {
+      perror("tcsetpgrp");
+      return 1;
+    }
+    waitpid(pid, &status, 0);
+    if (tcsetpgrp(0, getpid()) == -1) {
+      perror("tcsetpgrp");
+      return 1;
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
   }
 }
 
