@@ -200,11 +200,13 @@ After waiting, all of the child processes have terminated, so executing
 foreground process group will lead to an error. 
 
 The shell should also not terminate when the user presses `Ctrl+C`. This means
-that it must set the `SIGINT` signal disposition to `SIG_IGN`. So in main, both
-`SIGINT` and `SIGTTOU` signals are ignored by the shell process. 
-The child must restore both of these signals using `restore_signal` for intended
-signal behaviour. Child processes must follow the default action of terminating
-on `SIGINT`.
+that it must set the `SIGINT` signal disposition to a handler that does not
+follow the default action of terminating. So in main, both `SIGINT` and
+`SIGTTOU` do not have default signal dispositions - `SIGINT` has a custom
+handler and `SIGTTOU` has a `SIG_IGN` disposition.
+The child must restore both of these dispositions using `restore_signal` for
+intended signal behaviour. Child processes must follow the default action of
+terminating on `SIGINT`.
 
 There exists a possibility where the child execution path may reach `execvp`
 before the parent reaches `tcsetpgrp`. This is a limitation of the current
@@ -215,3 +217,31 @@ receive terminal generated signals, such as `Ctrl+C`, and the consumption of
 early input, such as `cat`, will send the child group `SIGTTIN` with a default
 action of stopping.
 
+The shell should write a new line when the user presses `Ctrl+C` during `fgets`
+for a clean interface. This requires adding a custom handler for `SIGINT`,
+`handle_sigint` in main because the disposition `SIG_IGN` is not enough - the
+shell must output `\n` on top of not following the default disposition.
+
+In the handler, the newline is output using `write` instead of using `printf`
+because it is async-signal-safe which is to prevent undefined behaviour in
+asynchronous operations like signal handling: `printf` should not be
+re-entered by a signal while its internal state is updating, otherwise the
+program may suffer a deadlock or data corruption.
+
+The same `struct sigaction psa` was used to record the signal dispositions for
+`SIGINT` and `SIGTTOU` for simplicity. The current implementation only has a
+specific custom handler for `SIGINT` and not `SIGTTOU`; `SIGTTOU` does not do
+more than `SIG_IGN`, so there is no need for a comparison statement in 
+`handle_sigint`. Alternatively, multiple structs may be used to define the
+action of each signal. This is ideal when there are signals that have different
+masks, handlers, flags, or when it makes for a cleaner implementation. As the
+current complexity stands, it is not needed at this stage. 
+
+The significance of `sigint_received` is to determine if it was a `SIGINT` that
+caused `fgets` to be `NULL`, and not another error. If `SIGINT` is received,
+the prompt loop must call `clearerr(stdin)` in the `fgets` if statement so
+future reads proceed normally.
+
+The program must call `fflush` after `printf` as it does not see `\n` in 
+`"wush> "`. The user should see the prompt before `fgets` blocks for reading
+input, rather than the prompt showing after `fgets` stops blocking.
