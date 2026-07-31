@@ -15,9 +15,9 @@ The flow below reads like a decision tree:
         - `prepare_input_fd` (`open_input_file`)
         - `prepare_output_fd` (`open_output_file`)
             1: `exec_pipe`
-                - `run_child` (`execvp`) once
+                - `run_child` once
             2: `exec_cmd`
-                - `run_child` (`execvp`) for each stage
+                - `run_child` for each stage
     2: built-in handler
         1: `exit`
         2: `cd`
@@ -26,6 +26,7 @@ The flow below reads like a decision tree:
 All paths eventually return control to the main shell loop.
 
 # Ownership
+`main` takes ownership of shell initialisation and prompt-level signal handling.
 `parser` takes ownership of command representation.
 `external_command` prepares the input and output descriptors, then transfers
 ownership to `exec_cmd` or `exec_pipe`.

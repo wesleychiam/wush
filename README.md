@@ -5,7 +5,11 @@ A Unix shell implemented from scratch in C.
 The program will repeatedly prompt the user until they wish to exit. It features
 built-in commands such as exit and cd, and external commands, for example: `ls`,
 `pwd`, `whoami`. It also has redirection capabilities using `<`, `>`, `>>`, and
-the here-document `<<`, as well as pipes `|` between two commands.
+the here-document `<<`, as well as pipes `|` between commands. The shell also
+has basic support for signal handling, such as when the user presses `Ctrl+C`:
+at the prompt, it clears the current input and shows a fresh prompt; and during
+a foreground command or pipeline, it terminates that job without terminating the
+shell.
 
 ## Startup
 To initialise the program, run in terminal:
@@ -15,7 +19,7 @@ To initialise the program, run in terminal:
     ./main
 ```
 
-## Example usages
+## Usage examples
 Example usage of external commands, after running the above commands:
 ```sh
     wush> cd bad_path
@@ -24,7 +28,7 @@ Example usage of external commands, after running the above commands:
     main  main.c  main.o
     wush> cd ..
     wush> ls
-    LICENSE  MakeFile  README.md  build  src
+    LICENSE  Makefile  README.md  build  src
     wush> exit
 ```
 
@@ -56,13 +60,23 @@ Example usage of multi-stage pipelines:
     apple
 ```
 
+Example usage of signal-handling:
+
+```sh
+    wush> echo hello^C
+    wush> 
+``` 
+(Partially typed input)
+
+```sh
+    wush> sleep 10   
+    ^Cwush> 
+```
+(Terminated mid-sleep job)
+
 ## Limitations
-A limitation of the shell is the parser requiring commands to be separated by
-whitespace, so running a command such as `cat<file1.txt` will result in an
-`execvp` failure and not execute.
+The shell relies on the convention that standard input, standard output, and
+standard error occupy descriptors 0-2 for redirection functionality.
 
-The shell relies on standard input, standard output, and standard error occupy
-descriptors 0-2 for redirection functionality.
-
-## Plans
-- Signal handling, such as `^C`.
+There is also a small race condition before terminal handoff, mentioned in the
+`design-decisions.md` file.
