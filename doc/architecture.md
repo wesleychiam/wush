@@ -15,9 +15,9 @@ The flow below reads like a decision tree:
         - `prepare_input_fd` (`open_input_file`)
         - `prepare_output_fd` (`open_output_file`)
             1: `exec_pipe`
-                - `run_child` once
-            2: `exec_cmd`
                 - `run_child` for each stage
+            2: `exec_cmd`
+                - `run_child` once
     2: built-in handler
         1: `exit`
         2: `cd`
